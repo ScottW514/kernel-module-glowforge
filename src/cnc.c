@@ -3,6 +3,7 @@
  *
  * Drives the stepper motors and laser.
  *
+ * Copyright (C) 2020 Scott Wiederhold <s.e.wiederhold@gmail.com>
  * Copyright (C) 2015-2018 Glowforge, Inc. <opensource@glowforge.com>
  *
  * This program is free software; you can redistribute it and/or modify
@@ -133,8 +134,8 @@ static const u32 sdma_script[] = {
   0x3a7f6ac8, 0x68d30141, 0x01420160, 0x7dda0000
 };
 
-static const ktime_t ramp_update_interval_ktime = { .tv64 = RAMP_UPDATE_INTERVAL_NS };
-static const ktime_t charge_pump_interval_ktime  = { .tv64 = CHARGE_PUMP_INTERVAL_NS };
+static const ktime_t ramp_update_interval_ktime = RAMP_UPDATE_INTERVAL_NS;
+static const ktime_t charge_pump_interval_ktime  = CHARGE_PUMP_INTERVAL_NS;
 
 extern struct kobject *glowforge_kobj;
 

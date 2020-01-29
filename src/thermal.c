@@ -1,6 +1,7 @@
 /**
  * thermal.c
  *
+ * Copyright (C) 2020 Scott Wiederhold <s.e.wiederhold@gmail.com>
  * Copyright (C) 2015-2018 Glowforge, Inc. <opensource@glowforge.com>
  *
  * This program is free software; you can redistribute it and/or modify
@@ -33,7 +34,7 @@
 #define HEATER_DUTY_CYCLE_BITS  (FIELD_SIZEOF(struct thermal, heater_duty_fraction)*8)
 #define HEATER_DUTY_MAX         ((1 << HEATER_DUTY_CYCLE_BITS)-1)
 
-static const ktime_t heater_pwm_period = { .tv64 = HEATER_PWM_PERIOD_NS };
+static const ktime_t heater_pwm_period = HEATER_PWM_PERIOD_NS;
 static const ktime_t ktime_zero = {0};
 static void thermal_set_heater_duty_fraction(struct thermal *self, u16 duty_fraction);
 
