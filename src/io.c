@@ -3,6 +3,7 @@
  *
  * I/O port and PWM configuration.
  *
+ * Copyright (C) 2020 Scott Wiederhold <s.e.wiederhold@gmail.com>
  * Copyright (C) 2015-2018 Glowforge, Inc. <opensource@glowforge.com>
  *
  * This program is free software; you can redistribute it and/or modify
@@ -177,18 +178,16 @@ int io_init_pwms(struct device_node *of_node, const struct pwm_channel_config *p
   /*
    * Enable and initialize all channels with their designated frequencies,
    * but set their duty cycles to 0.
-   * http://lists.infradead.org/pipermail/linux-arm-kernel/2012-August/115674.html
-   * suggests that pwm_enable() must be called before pwm_config().
    */
   for (i = 0; i < npwms; i++) {
     struct pwm_channel *ch = &pwm_channels[i];
     if (!ch->pwmdev) { continue; }
-    if ((ret = pwm_enable(ch->pwmdev))) {
-      pr_err("unable to enable PWM channel %d\n", i);
-      goto fail;
-    }
     if ((ret = pwm_config(ch->pwmdev, 0, ch->period))) {
       pr_err("unable to set period of PWM channel %d\n", i);
+      goto fail;
+    }
+    if ((ret = pwm_enable(ch->pwmdev))) {
+      pr_err("unable to enable PWM channel %d\n", i);
       goto fail;
     }
   }
