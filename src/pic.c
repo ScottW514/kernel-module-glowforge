@@ -268,7 +268,7 @@ int pic_probe(struct spi_device *spi)
   int ret;
   if (!pic_enabled) { dev_info(&spi->dev, "%s: disabled, skipping", __func__); return 0; }
   dev_info(&spi->dev, "%s: started", __func__);
-  dev_dbg(&spi->dev, "SPI bus %hd, cs %hhd, %d Hz, %d bits/word, mode 0x%hx",
+  dev_info(&spi->dev, "SPI bus %hd, cs %hhd, %d Hz, %d bits/word, mode 0x%hx",
     spi->master->bus_num,
     spi->chip_select,
     spi->max_speed_hz,

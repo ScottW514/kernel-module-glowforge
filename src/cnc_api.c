@@ -24,33 +24,6 @@
 #include "device_attr.h"
 #include "notifiers.h"
 
-/**
- * Returns true if the given buffer matches the "magic" string required by
- * the writable sysfs attributes.
- */
-static inline bool validate_sysfs_input(const char *buf, size_t count)
-{
-  return (count == 1 && buf[0] == '1');
-}
-
-
-/**
- * Helper function for handling writes to sysfs action attributes.
- */
-static ssize_t perform_sysfs_action(struct cnc *self, const char *buf, size_t count, int (*action)(struct cnc *))
-{
-  ssize_t ret;
-  if (!validate_sysfs_input(buf, count)) {
-    return -EINVAL;
-  }
-  ret = action(self);
-  if (ret) {
-    return ret;
-  }
-  return count;
-}
-
-
 
 #pragma mark - Character device fops
 
@@ -238,8 +211,12 @@ void cnc_notify_state_changed(struct cnc *self)
 
 #define _DEFINE_COMMAND_ATTR(name) \
   static ssize_t name##_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t count) { \
-    struct cnc *self = dev_get_drvdata(dev); \
-    return perform_sysfs_action(self, buf, count, cnc_##name); } \
+    struct cnc *self = dev_get_drvdata(dev); char ch; int ret; \
+    if (count < 1) { return -EINVAL; } \
+    ch = *buf; if (ch != '1') { return -EINVAL; } \
+    ret = cnc_##name(self); \
+    return (ret == 0) ? count : ret; \
+  } \
   static DEVICE_ATTR(name, S_IWUSR, NULL, name##_store)
 #define DEFINE_COMMAND_ATTR(name) _DEFINE_COMMAND_ATTR(name)
 
