@@ -31,6 +31,7 @@
 #define CNC_GROUP_NAME            "cnc"
 #define PIC_GROUP_NAME            "pic"
 #define THERMAL_GROUP_NAME        "thermal"
+#define HEAD_GROUP_NAME           "head"
 
 #define ROOT_CLASS_NAME           "class"
 #define LED_GROUP_NAME            "leds"
@@ -39,6 +40,7 @@
 #define SYSFS_ATTR_DIR            SYSFS_ROOT_DIR CNC_GROUP_NAME "/"
 #define PIC_SYSFS_ATTR_DIR        SYSFS_ROOT_DIR PIC_GROUP_NAME "/"
 #define THERMAL_SYSFS_ATTR_DIR    SYSFS_ROOT_DIR THERMAL_GROUP_NAME "/"
+#define HEAD_SYSFS_ATTR_DIR       SYSFS_ROOT_DIR HEAD_GROUP_NAME "/"
 #define PULSE_DEVICE_DIR          "/dev/"
 #define INPUT_DEVICE_DIR          "/dev/input/by-path/"
 
@@ -102,6 +104,22 @@
 #define ATTR_WATER_TEMP_1         water_temp_1
 #define ATTR_WATER_TEMP_2         water_temp_2
 
+#define ATTR_INFO                 info
+#define ATTR_Z_ENABLE             z_enable
+#define ATTR_Z_CURRENT            z_current
+#define ATTR_Z_MODE               z_mode
+#define ATTR_PURGE_AIR            purge_air
+#define ATTR_PURGE_CURRENT        purge_air_current
+#define ATTR_HALL_SENSOR          hall_sensor
+#define ATTR_ACCEL_IRQ            accel_irq
+#define ATTR_BEAM_DETECT_DIGITAL  beam_detect_digital
+#define ATTR_BEAM_DETECT_ANALOG   beam_detect_analog
+#define ATTR_AIR_ASSIST_PWM       air_assist_pwm
+#define ATTR_AIR_ASSIST_TACH      air_assist_tach
+#define ATTR_WHITE_LED            white_led
+#define ATTR_UV_LED               uv_led
+#define ATTR_MEASURE_LASER        measure_laser
+
 #define PULSE_DEVICE_PATH         PULSE_DEVICE_DIR PULSE_DEVICE_NAME
 #define ATTR_STATE_PATH           SYSFS_ATTR_DIR STR(ATTR_STATE)
 #define ATTR_FAULTS_PATH          SYSFS_ATTR_DIR STR(ATTR_FAULTS)
@@ -144,6 +162,22 @@
 #define ATTR_EXHAUST_TACH_PATH    THERMAL_SYSFS_ATTR_DIR STR(ATTR_EXHAUST_TACH)
 #define ATTR_WATER_PUMP_ON_PATH   THERMAL_SYSFS_ATTR_DIR STR(ATTR_WATER_PUMP_ON)
 #define ATTR_TEC_ON_PATH          THERMAL_SYSFS_ATTR_DIR STR(ATTR_TEC_ON)
+
+#define ATTR_INFO_PATH                 HEAD_SYSFS_ATTR_DIR STR(ATTR_INFO)
+#define ATTR_Z_ENABLE_PATH             HEAD_SYSFS_ATTR_DIR STR(ATTR_Z_ENABLE)
+#define ATTR_Z_CURRENT_PATH            HEAD_SYSFS_ATTR_DIR STR(ATTR_Z_CURRENT)
+#define ATTR_Z_MODE_PATH               HEAD_SYSFS_ATTR_DIR STR(ATTR_Z_MODE)
+#define ATTR_PURGE_AIR_PATH            HEAD_SYSFS_ATTR_DIR STR(ATTR_PURGE_AIR)
+#define ATTR_PURGE_CURRENT_PATH        HEAD_SYSFS_ATTR_DIR STR(ATTR_PURGE_CURRENT)
+#define ATTR_HALL_SENSOR_PATH          HEAD_SYSFS_ATTR_DIR STR(ATTR_HALL_SENSOR)
+#define ATTR_ACCEL_IRQ_PATH            HEAD_SYSFS_ATTR_DIR STR(ATTR_ACCEL_IRQ)
+#define ATTR_BEAM_DETECT_DIGITAL_PATH  HEAD_SYSFS_ATTR_DIR STR(ATTR_BEAM_DETECT_DIGITAL)
+#define ATTR_BEAM_DETECT_ANALOG_PATH   HEAD_SYSFS_ATTR_DIR STR(ATTR_BEAM_DETECT_ANALOG)
+#define ATTR_AIR_ASSIST_PWM_PATH       HEAD_SYSFS_ATTR_DIR STR(ATTR_AIR_ASSIST_PWM)
+#define ATTR_AIR_ASSIST_TACH_PATH      HEAD_SYSFS_ATTR_DIR STR(ATTR_AIR_ASSIST_TACH)
+#define ATTR_WHITE_LED_PATH            HEAD_SYSFS_ATTR_DIR STR(ATTR_WHITE_LED)
+#define ATTR_UV_LED_PATH               HEAD_SYSFS_ATTR_DIR STR(ATTR_UV_LED)
+#define ATTR_MEASURE_LASER_PATH        HEAD_SYSFS_ATTR_DIR STR(ATTR_MEASURE_LASER)
 
 #define LED_TARGET_SUFFIX                 "/target"
 #define LED_SPEED_SUFFIX                  "/speed"

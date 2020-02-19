@@ -1,6 +1,7 @@
 /**
  * Glowforge kernel module
  *
+ * Copyright (C) 2020 Scott Wiederhold <s.e.wiederhold@gmail.com>
  * Copyright (C) 2015-2018 Glowforge, Inc. <opensource@glowforge.com>
  * Written by Matt Sarnoff with contributions from Taylor Vaughn.
  *
@@ -34,6 +35,7 @@
 #include "io.h"
 #include "pic.h"
 #include "cnc.h"
+#include "head.h"
 #include "thermal.h"
 #include "uapi/glowforge.h"
 
@@ -46,17 +48,38 @@ MODULE_VERSION("dev");
 int cnc_enabled = 1;
 int pic_enabled = 1;
 int thermal_enabled = 1;
+int head_enabled = 1;
 
 module_param(cnc_enabled, int, 0);
 module_param(pic_enabled, int, 0);
 module_param(thermal_enabled, int, 0);
+module_param(head_enabled, int, 0);
 
 /** kobject that provides /sys/glowforge */
 struct kobject *glowforge_kobj;
 
 ATOMIC_NOTIFIER_HEAD(dms_notifier_list);
 
+static const struct of_device_id head_dt_ids[] = {
+  { .compatible = "glowforge,head" },
+  {},
+};
 
+static struct i2c_device_id head_idtable[] = {
+  { "glowforge,head", 0 },
+  {},
+};
+
+static struct i2c_driver head = {
+  .probe =  head_probe,
+  .remove = head_remove,
+  .id_table = head_idtable,
+  .driver = {
+    .name =   "glowforge_head",
+    .owner =  THIS_MODULE,
+    .of_match_table = of_match_ptr(head_dt_ids),
+  },
+};
 
 static const struct of_device_id pic_dt_ids[] = {
   { .compatible = "glowforge,pic" },
@@ -65,13 +88,13 @@ static const struct of_device_id pic_dt_ids[] = {
 
 
 static struct spi_driver pic_driver = {
+  .probe =  pic_probe,
+  .remove = pic_remove,
   .driver = {
     .name =   "glowforge_pic",
     .owner =  THIS_MODULE,
     .of_match_table = of_match_ptr(pic_dt_ids),
   },
-  .probe =  pic_probe,
-  .remove = pic_remove,
 };
 
 
@@ -128,6 +151,13 @@ static int __init glowforge_init(void)
     goto failed_pic_init;
   }
 
+  /* Initialize the head */
+  status = i2c_add_driver(&head);
+  if (status < 0) {
+    pr_err("failed to initialize head\n");
+    goto failed_head_init;
+  }
+
   /* Initialize the thermal subsystem */
   status = platform_driver_register(&thermal);
   if (status < 0) {
@@ -149,6 +179,8 @@ failed_cnc_init:
   platform_driver_unregister(&thermal);
 failed_thermal_init:
   spi_unregister_driver(&pic_driver);
+failed_head_init:
+  i2c_del_driver(&head);
 failed_pic_init:
   kobject_put(glowforge_kobj);
   return status;
@@ -161,6 +193,7 @@ static void __exit glowforge_exit(void)
   pr_info("%s: started\n", __func__);
   platform_driver_unregister(&cnc);
   platform_driver_unregister(&thermal);
+  i2c_del_driver(&head);
   spi_unregister_driver(&pic_driver);
   kobject_put(glowforge_kobj);
   pr_info("%s: done\n", __func__);
@@ -171,6 +204,7 @@ module_exit(glowforge_exit);
 /** For autoloading */
 static struct of_device_id glowforge_dt_ids[] = {
   { .compatible = "glowforge,cnc" },
+  { .compatible = "glowforge,head" },
   { .compatible = "glowforge,pic" },
   { .compatible = "glowforge,thermal" },
   {}
