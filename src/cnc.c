@@ -35,6 +35,7 @@
 #include <linux/gpio.h>
 #include <linux/gpio/consumer.h>
 #include <linux/interrupt.h>
+#include <linux/of_reserved_mem.h>
 
 /** Module parameters */
 extern int cnc_enabled;
@@ -1158,6 +1159,19 @@ int cnc_probe(struct platform_device *pdev)
   self->status.state = STATE_IDLE;
 #endif
 
+  /*
+   * Attach a dedicated coherent DMA pool if the DT provides one (a
+   * memory-region -> non-reusable shared-dma-pool). The 128 MiB pulse buffer
+   * is too large and alignment-sensitive to pull reliably from the shared CMA
+   * once boot has fragmented it (cma_alloc -EBUSY). The generic device core
+   * only auto-attaches "restricted-dma-pool" nodes, so we must do it here.
+   * -ENODEV just means no memory-region: fall back to the default allocator.
+   */
+  ret = of_reserved_mem_device_init(self->dev);
+  if (ret && ret != -ENODEV) {
+    dev_warn(self->dev, "no dedicated DMA pool (%d); using default allocator", ret);
+  }
+
   /* Reserve memory for pulse data */
   ret = cnc_buffer_init(self);
   if (ret) {
@@ -1296,6 +1310,7 @@ failed_pwm_init:
 failed_io_init:
   cnc_buffer_destroy(self);
 failed_buffer_init:
+  of_reserved_mem_device_release(self->dev);
   mutex_destroy(&self->lock);
   return ret;
 }
@@ -1321,6 +1336,7 @@ void cnc_remove(struct platform_device *pdev)
   sysfs_remove_group(&pdev->dev.kobj, &cnc_attr_group);
   misc_deregister(&self->pulsedev);
   cnc_buffer_destroy(self);
+  of_reserved_mem_device_release(self->dev);
   mutex_destroy(&self->lock);
   tasklet_kill(&self->fault_tasklet);
   flush_scheduled_work();
