@@ -2,3 +2,14 @@ Module.symvers
 modules.order
 .tmp_versions
 
+# Build-time generated SDMA script header (assembled from asm/sdma.asm by
+# tools/sdma_asm.pl; see Makefile). Edit the .asm, not the generated header.
+/src/sdma.asm.h
+
+# Kernel-module build artifacts (externalsrc builds in the source tree)
+*.o
+*.ko
+*.mod
+*.mod.c
+.*.cmd
+
