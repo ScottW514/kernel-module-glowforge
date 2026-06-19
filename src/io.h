@@ -164,7 +164,7 @@ void io_set_and_release_gpios(int *gpios, size_t ngpios, const struct pin_change
  * @param npwms         Number of PWM channels in the preceding arrays
  * @return              0 on success, error code on failure
  */
-int io_init_pwms(struct device_node *of_node, const struct pwm_channel_config *pwm_configs, struct pwm_channel *pwm_channels, size_t npwms);
+int io_init_pwms(struct device *dev, const struct pwm_channel_config *pwm_configs, struct pwm_channel *pwm_channels, size_t npwms);
 
 /**
  * Sets the duty cycle (percentage) of the given PWM channel.

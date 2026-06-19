@@ -64,6 +64,6 @@
 
 int pic_probe(struct spi_device *spi);
 
-int pic_remove(struct spi_device *spi);
+void pic_remove(struct spi_device *spi);
 
 #endif

@@ -32,6 +32,6 @@
 
 int cnc_probe(struct platform_device *pdev);
 
-int cnc_remove(struct platform_device *pdev);
+void cnc_remove(struct platform_device *pdev);
 
 #endif

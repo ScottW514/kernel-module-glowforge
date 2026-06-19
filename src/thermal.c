@@ -31,7 +31,7 @@
 #define HEATER_PWM_PERIOD_NS  1e7
 
 /** Heater maximum duty cycle. Since heater_duty_fraction is a u16, this value is 65535. */
-#define HEATER_DUTY_CYCLE_BITS  (FIELD_SIZEOF(struct thermal, heater_duty_fraction)*8)
+#define HEATER_DUTY_CYCLE_BITS  (sizeof_field(struct thermal, heater_duty_fraction)*8)
 #define HEATER_DUTY_MAX         ((1 << HEATER_DUTY_CYCLE_BITS)-1)
 
 static const ktime_t heater_pwm_period = HEATER_PWM_PERIOD_NS;
@@ -349,7 +349,7 @@ int thermal_probe(struct platform_device *pdev)
   }
 
   /* Set up PWMs */
-  ret = io_init_pwms(pdev->dev.of_node, thermal_pwm_configs, self->pwms, THERMAL_NUM_PWM_CHANNELS);
+  ret = io_init_pwms(&pdev->dev, thermal_pwm_configs, self->pwms, THERMAL_NUM_PWM_CHANNELS);
   if (ret) {
     goto failed_pwm_init;
   }
@@ -397,10 +397,10 @@ failed_io_init:
 }
 
 
-int thermal_remove(struct platform_device *pdev)
+void thermal_remove(struct platform_device *pdev)
 {
   struct thermal *self = platform_get_drvdata(pdev);
-  if (!thermal_enabled) { return 0; }
+  if (!thermal_enabled) { return; }
   dev_info(&pdev->dev, "%s: started", __func__);
   thermal_make_safe(self);
   dms_notifier_chain_unregister(&dms_notifier_list, &self->dms_notifier);
@@ -411,5 +411,5 @@ int thermal_remove(struct platform_device *pdev)
   thermal_teardown_tachs(self);
   io_release_gpios(self->gpios, THERMAL_NUM_GPIO_PINS);
   dev_info(&pdev->dev, "%s: done", __func__);
-  return 0;
+  return;
 }

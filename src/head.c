@@ -92,7 +92,7 @@ static int head_dms_handler(struct notifier_block *nb, unsigned long action, voi
 }
 
 
-int head_probe(struct i2c_client *client, const struct i2c_device_id *id)
+int head_probe(struct i2c_client *client)
 {
   struct head_data *self;
   int ret = 0;
@@ -161,11 +161,11 @@ failed_head_init:
 }
 
 
-int head_remove(struct i2c_client *client)
+void head_remove(struct i2c_client *client)
 {
   struct head_data *self = i2c_get_clientdata(client);
   if (!head_enabled)
-    return 0;
+    return;
   dev_info(&client->dev, "%s: started", __func__);
   head_make_safe(self);
   dms_notifier_chain_unregister(&dms_notifier_list, &self->dms_notifier);
@@ -173,5 +173,5 @@ int head_remove(struct i2c_client *client)
   sysfs_remove_group(&client->dev.kobj, &head_attr_group);
   mutex_destroy(&self->lock);
   dev_info(&client->dev, "%s: done", __func__);
-  return 0;
+  return;
 }

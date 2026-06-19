@@ -9,7 +9,7 @@ SRC = ledtrig_smooth.c io.c head.c head_api.c \
       cnc_buffer.c cnc.c cnc_api.c cnc_pins.c \
       glowforge.c
 
-ccflags-y += -I$(PWD) -Wno-unknown-pragmas
+ccflags-y += -I$(PWD) -Wno-unknown-pragmas -Wno-error
 
 obj-m += $(MODULE_NAME).o
 $(MODULE_NAME)-objs := $(foreach srcfile,$(SRC),$(SRC_DIR)/$(srcfile:.c=.o))

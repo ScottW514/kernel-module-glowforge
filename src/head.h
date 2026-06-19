@@ -26,8 +26,8 @@
 
 #include <linux/i2c.h>
 
-int head_probe(struct i2c_client *client, const struct i2c_device_id *id);
+int head_probe(struct i2c_client *client);
 
-int head_remove(struct i2c_client *client);
+void head_remove(struct i2c_client *client);
 
 #endif

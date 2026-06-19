@@ -63,7 +63,8 @@ int pic_read_one_register(struct spi_device *spi, enum pic_register reg)
   int status;
 
   x.len = sizeof(struct pic_transaction);
-  x.delay_usecs = TRANSFER_DELAY_USECS;
+  x.delay.value = TRANSFER_DELAY_USECS;
+  x.delay.unit = SPI_DELAY_UNIT_USECS;
   x.tx_buf = self->txbuf;
   x.rx_buf = self->rxbuf;
 
@@ -85,7 +86,8 @@ int pic_write_one_register(struct spi_device *spi, enum pic_register reg, pic_va
 
   x.len = sizeof(struct pic_transaction);
   x.tx_buf = self->txbuf;
-  x.delay_usecs = TRANSFER_DELAY_USECS;
+  x.delay.value = TRANSFER_DELAY_USECS;
+  x.delay.unit = SPI_DELAY_UNIT_USECS;
 #if VERIFY_WRITES
   x.len *= 2;
   x.rx_buf = self->rxbuf;
@@ -130,7 +132,8 @@ int pic_read_register_range(struct spi_device *spi, enum pic_register first_reg,
 
   num_regs = last_reg-first_reg+1;
   x.len = sizeof(struct pic_transaction)*num_regs;
-  x.delay_usecs = TRANSFER_DELAY_USECS;
+  x.delay.value = TRANSFER_DELAY_USECS;
+  x.delay.unit = SPI_DELAY_UNIT_USECS;
   x.tx_buf = self->txbuf;
   x.rx_buf = self->rxbuf;
 
@@ -171,7 +174,8 @@ int pic_write_register_range(struct spi_device *spi, enum pic_register first_reg
 
   x.len = sizeof(struct pic_transaction)*num_regs;
   x.tx_buf = self->txbuf;
-  x.delay_usecs = TRANSFER_DELAY_USECS;
+  x.delay.value = TRANSFER_DELAY_USECS;
+  x.delay.unit = SPI_DELAY_UNIT_USECS;
 #if VERIFY_WRITES
   x.len *= 2;
   x.rx_buf = self->rxbuf;
@@ -230,7 +234,8 @@ int pic_write_data(struct spi_device *spi, const void *buf, size_t count)
   if (count > MAX_REGISTERS_PER_TRANSFER*sizeof(struct pic_transaction)) { return -E2BIG; }
 
   x.len = count;
-  x.delay_usecs = TRANSFER_DELAY_USECS;
+  x.delay.value = TRANSFER_DELAY_USECS;
+  x.delay.unit = SPI_DELAY_UNIT_USECS;
   x.tx_buf = self->txbuf;
   x.rx_buf = self->rxbuf;
 
@@ -269,8 +274,8 @@ int pic_probe(struct spi_device *spi)
   if (!pic_enabled) { dev_info(&spi->dev, "%s: disabled, skipping", __func__); return 0; }
   dev_info(&spi->dev, "%s: started", __func__);
   dev_info(&spi->dev, "SPI bus %hd, cs %hhd, %d Hz, %d bits/word, mode 0x%hx",
-    spi->master->bus_num,
-    spi->chip_select,
+    spi->controller->bus_num,
+    spi_get_chipselect(spi, 0),
     spi->max_speed_hz,
     spi->bits_per_word,
     spi->mode);
@@ -347,10 +352,10 @@ failed_pic_detect:
 }
 
 
-int pic_remove(struct spi_device *spi)
+void pic_remove(struct spi_device *spi)
 {
   struct pic *self = spi_get_drvdata(spi);
-  if (!pic_enabled) { return 0; }
+  if (!pic_enabled) { return; }
   dev_info(&spi->dev, "%s: started", __func__);
   pic_make_safe(spi);
   dms_notifier_chain_unregister(&dms_notifier_list, &self->dms_notifier);
@@ -359,5 +364,5 @@ int pic_remove(struct spi_device *spi)
   pic_unregister_leds(spi);
   mutex_destroy(&self->lock);
   dev_info(&spi->dev, "%s: done", __func__);
-  return 0;
+  return;
 }

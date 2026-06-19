@@ -116,6 +116,7 @@ static fixed epsilon = FIXED(0, 0.0625);
 
 struct ledtrig_smooth_data {
   struct timer_list timer;
+  struct led_classdev *led_cdev;
   
   /* Parameters */
   fixed target;
@@ -169,7 +170,7 @@ static bool set_pulse_periods(struct ledtrig_smooth_data *data, int on, int off)
 
 static void timestep(struct led_classdev *led_cdev)
 {
-  struct ledtrig_smooth_data *data = led_cdev->trigger_data;
+  struct ledtrig_smooth_data *data = led_get_trigger_data(led_cdev);
   bool pulsing = update_pulser(data);
   s16 clamped_value;
   
@@ -242,7 +243,7 @@ fixed value_from_raw_brightness(int raw_brightness)
 static ssize_t target_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
   struct led_classdev *led_cdev = dev_get_drvdata(dev);
-  struct ledtrig_smooth_data *data = led_cdev->trigger_data;
+  struct ledtrig_smooth_data *data = led_get_trigger_data(led_cdev);
   return sprintf(buf, "%hd\n", data->target.ipart);
 }
 
@@ -250,7 +251,7 @@ static ssize_t target_show(struct device *dev, struct device_attribute *attr, ch
 static ssize_t target_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t size)
 {
   struct led_classdev *led_cdev = dev_get_drvdata(dev);
-  struct ledtrig_smooth_data *data = led_cdev->trigger_data;
+  struct ledtrig_smooth_data *data = led_get_trigger_data(led_cdev);
   unsigned long new_target;
   ssize_t ret = kstrtoul(buf, 10, &new_target);
   if (ret) { return ret; }
@@ -274,7 +275,7 @@ static ssize_t target_store(struct device *dev, struct device_attribute *attr, c
 static ssize_t speed_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
   struct led_classdev *led_cdev = dev_get_drvdata(dev);
-  struct ledtrig_smooth_data *data = led_cdev->trigger_data;
+  struct ledtrig_smooth_data *data = led_get_trigger_data(led_cdev);
   u8 speed = data->c.ipart << SPEED_C_SHIFT;
   return sprintf(buf, "%hhd\n", speed);
 }
@@ -283,7 +284,7 @@ static ssize_t speed_show(struct device *dev, struct device_attribute *attr, cha
 static ssize_t speed_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t size)
 {
   struct led_classdev *led_cdev = dev_get_drvdata(dev);
-  struct ledtrig_smooth_data *data = led_cdev->trigger_data;
+  struct ledtrig_smooth_data *data = led_get_trigger_data(led_cdev);
   unsigned long new_speed;
   ssize_t ret = kstrtoul(buf, 10, &new_speed);
   if (ret) { return ret; }
@@ -297,7 +298,7 @@ static ssize_t speed_store(struct device *dev, struct device_attribute *attr, co
 static ssize_t pulse_on_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
   struct led_classdev *led_cdev = dev_get_drvdata(dev);
-  struct ledtrig_smooth_data *data = led_cdev->trigger_data;
+  struct ledtrig_smooth_data *data = led_get_trigger_data(led_cdev);
   return sprintf(buf, "%d\n", data->pulse_on_count*MSECS_PER_UPDATE);
 }
 
@@ -305,7 +306,7 @@ static ssize_t pulse_on_show(struct device *dev, struct device_attribute *attr, 
 static ssize_t pulse_on_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t size)
 {
   struct led_classdev *led_cdev = dev_get_drvdata(dev);
-  struct ledtrig_smooth_data *data = led_cdev->trigger_data;
+  struct ledtrig_smooth_data *data = led_get_trigger_data(led_cdev);
   unsigned long new_on;
   ssize_t ret = kstrtoul(buf, 10, &new_on);
   if (ret) { return ret; }
@@ -319,7 +320,7 @@ static ssize_t pulse_on_store(struct device *dev, struct device_attribute *attr,
 static ssize_t pulse_off_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
   struct led_classdev *led_cdev = dev_get_drvdata(dev);
-  struct ledtrig_smooth_data *data = led_cdev->trigger_data;
+  struct ledtrig_smooth_data *data = led_get_trigger_data(led_cdev);
   return sprintf(buf, "%d\n", data->pulse_off_count*MSECS_PER_UPDATE);
 }
 
@@ -327,7 +328,7 @@ static ssize_t pulse_off_show(struct device *dev, struct device_attribute *attr,
 static ssize_t pulse_off_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t size)
 {
   struct led_classdev *led_cdev = dev_get_drvdata(dev);
-  struct ledtrig_smooth_data *data = led_cdev->trigger_data;
+  struct ledtrig_smooth_data *data = led_get_trigger_data(led_cdev);
   unsigned long new_off;
   ssize_t ret = kstrtoul(buf, 10, &new_off);
   if (ret) { return ret; }
@@ -353,13 +354,20 @@ const struct attribute_group smooth_attr_group = { .attrs = smooth_attrs };
 
 
 
+static void smooth_timer_cb(struct timer_list *t)
+{
+  struct ledtrig_smooth_data *data = from_timer(data, t, timer);
+  timestep(data->led_cdev);
+}
+
+
 #pragma mark - Activate/deactivate
 
-static void smooth_activate(struct led_classdev *led_cdev)
+static int smooth_activate(struct led_classdev *led_cdev)
 {
   struct ledtrig_smooth_data *data = kzalloc(sizeof(struct ledtrig_smooth_data), GFP_KERNEL);
   if (!data) {
-    return;
+    return -ENOMEM;
   }
   
   if (sysfs_create_group(&led_cdev->dev->kobj, &smooth_attr_group)) {
@@ -371,24 +379,25 @@ static void smooth_activate(struct led_classdev *led_cdev)
   data->value = value_from_raw_brightness(led_cdev->brightness);
   data->target = data->value;
   data->c = FIXED_INT(16);
-  led_cdev->trigger_data = data;
-  setup_timer(&data->timer, (void (*)(unsigned long))timestep, (unsigned long)led_cdev);
-  led_cdev->activated = true;
-  return;
+  data->led_cdev = led_cdev;
+  led_set_trigger_data(led_cdev, data);
+  timer_setup(&data->timer, smooth_timer_cb, 0);
+  return 0;
   
 failed_create_group:
   kfree(data);
+  return -ENOMEM;
 }
 
 
 static void smooth_deactivate(struct led_classdev *led_cdev)
 {
-  struct ledtrig_smooth_data *data = led_cdev->trigger_data;
-  if (led_cdev->activated) {
-    del_timer_sync(&data->timer);
+  struct ledtrig_smooth_data *data = led_get_trigger_data(led_cdev);
+  if (data) {
+    timer_delete_sync(&data->timer);
     sysfs_remove_group(&led_cdev->dev->kobj, &smooth_attr_group);
+    led_set_trigger_data(led_cdev, NULL);
     kfree(data);
-    led_cdev->activated = false;
   }
 }
 

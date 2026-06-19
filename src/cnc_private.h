@@ -386,7 +386,7 @@ struct cnc {
    */
   u32 ramp_step_freq_delta;
   /** Timer that drives acceleration/deceleration updates. */
-  struct tasklet_hrtimer ramp_timer;
+  struct hrtimer ramp_timer;
   /** Toggles the charge pump input during a cut to keep the laser on. */
   struct hrtimer charge_pump_timer;
 #if INSTALL_PANIC_HANDLER

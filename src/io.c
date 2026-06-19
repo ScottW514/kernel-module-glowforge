@@ -132,13 +132,13 @@ void io_release_pwms(struct pwm_channel *pwm_channels, size_t npwms)
     struct pwm_device *pwmdev = pwm_channels[i].pwmdev;
     if (likely(pwmdev)) {
       pwm_disable(pwmdev);
-      pwm_free(pwmdev);
+      pwm_put(pwmdev);
     }
   }
 }
 
 
-int io_init_pwms(struct device_node *of_node, const struct pwm_channel_config *pwm_configs, struct pwm_channel *pwm_channels, size_t npwms)
+int io_init_pwms(struct device *dev, const struct pwm_channel_config *pwm_configs, struct pwm_channel *pwm_channels, size_t npwms)
 {
   int i;
   int ret;
@@ -149,7 +149,6 @@ int io_init_pwms(struct device_node *of_node, const struct pwm_channel_config *p
     const char *name = config->name;
     struct pwm_channel *ch = &pwm_channels[i];
     struct pwm_device *pwmdev;
-    int channel_num;
 
     if (unlikely(config->period == 0)) {
       pr_err("period must be nonzero for PWM channel \"%s\"\n", name);
@@ -158,15 +157,9 @@ int io_init_pwms(struct device_node *of_node, const struct pwm_channel_config *p
     }
     ch->period = config->period;
 
-    if (unlikely(of_property_read_u32(of_node, name, &channel_num) != 0)) {
-      pr_err("no definition found for PWM channel \"%s\"\n", name);
-      ret = -1;
-      goto fail;
-    }
-
-    pwmdev = pwm_request(channel_num, config->name);
+    pwmdev = pwm_get(dev, config->name);
     if (unlikely(IS_ERR(pwmdev))) {
-      pr_err("failed to request PWM channel %d for \"%s\": %ld\n", channel_num, name, PTR_ERR(pwmdev));
+      pr_err("failed to request PWM \"%s\": %ld\n", name, PTR_ERR(pwmdev));
       ch->pwmdev = NULL;
       ret = -1;
       goto fail;
@@ -227,7 +220,7 @@ u32 io_pwm_sample_register_address(struct pwm_channel *pwm_channel)
   /* Get base register address */
   struct pwm_device *pwmdev = pwm_channel->pwmdev;
   if (pwmdev) {
-    struct device *dev = pwmdev->chip->dev;
+    struct device *dev = pwmdev->chip->dev.parent;
     struct platform_device *pdev = container_of(dev, struct platform_device, dev);
     struct resource *res = pdev->resource;
     /* PWMSAR is 12 bytes past the base address */

@@ -313,8 +313,7 @@ static void _cnc_ramp_start(struct cnc *self)
   /* Disable DMA control of laser enable; force the line low. */
   gpio_direction_input(self->gpios[PIN_LASER_ON]);
   /* Begin periodic updates */
-  tasklet_hrtimer_start(&self->ramp_timer, ramp_update_interval_ktime,
-    HRTIMER_MODE_REL);
+  hrtimer_start(&self->ramp_timer, ramp_update_interval_ktime, HRTIMER_MODE_REL_SOFT);
 }
 
 
@@ -327,7 +326,7 @@ static void _cnc_ramp_stop(struct cnc *self)
   /* If called by ramp_update_tasklet_fn, don't cancel the timer, because */
   /* we're already running in a tasklet and the kernel doesn't like that */
   if (!in_softirq()) {
-    tasklet_hrtimer_cancel(&self->ramp_timer);
+    hrtimer_cancel(&self->ramp_timer);
   }
   self->status.decelerating = false;
   self->status.accelerating = false;
@@ -383,8 +382,7 @@ static enum hrtimer_restart ramp_update_tasklet_fn(struct hrtimer *timer)
   /* because the tasklet won't ever run concurrently with itself or any other */
   /* tasklet (uniprocessor system, tasklets can't be preempted), and won't */
   /* run in the sections protected by spin_lock_bh()/spin_unlock_bh(). */
-  struct tasklet_hrtimer *tasklet_hrtimer = container_of(timer, struct tasklet_hrtimer, timer);
-  struct cnc *self = container_of(tasklet_hrtimer, struct cnc, ramp_timer);
+  struct cnc *self = container_of(timer, struct cnc, ramp_timer);
 
   /* sanity check */
   if (!self->status.decelerating && !self->status.accelerating) {
@@ -1149,7 +1147,8 @@ int cnc_probe(struct platform_device *pdev)
   spin_lock_init(&self->status_lock);
   tasklet_init(&self->fault_tasklet, fault_tasklet_fn, (unsigned long)self);
   cnc_set_step_frequency(self, STEP_FREQUENCY_DEFAULT);
-  tasklet_hrtimer_init(&self->ramp_timer, ramp_update_tasklet_fn, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+  hrtimer_init(&self->ramp_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL_SOFT);
+  self->ramp_timer.function = ramp_update_tasklet_fn;
   hrtimer_init(&self->charge_pump_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
   self->charge_pump_timer.function = charge_pump_timer_cb;
 
@@ -1172,7 +1171,7 @@ int cnc_probe(struct platform_device *pdev)
   }
 
   /* Set up PWM */
-  ret = io_init_pwms(pdev->dev.of_node, &laser_pwm_config, &self->laser_pwm, 1);
+  ret = io_init_pwms(&pdev->dev, &laser_pwm_config, &self->laser_pwm, 1);
   if (ret) {
     goto failed_pwm_init;
   }
@@ -1302,14 +1301,14 @@ failed_buffer_init:
 }
 
 
-int cnc_remove(struct platform_device *pdev)
+void cnc_remove(struct platform_device *pdev)
 {
   struct cnc *self = platform_get_drvdata(pdev);
-  if (!cnc_enabled) { return 0; }
+  if (!cnc_enabled) { return; }
   dev_info(&pdev->dev, "%s: started", __func__);
   epit_stop(self->epit);
   sdma_set_channel_interrupt_callback(self->sdmac, NULL, NULL);
-  tasklet_hrtimer_cancel(&self->ramp_timer);
+  hrtimer_cancel(&self->ramp_timer);
   hrtimer_cancel(&self->charge_pump_timer);
 #if INSTALL_PANIC_HANDLER
   atomic_notifier_chain_unregister(&panic_notifier_list, &self->panic_notifier);
@@ -1326,5 +1325,5 @@ int cnc_remove(struct platform_device *pdev)
   tasklet_kill(&self->fault_tasklet);
   flush_scheduled_work();
   dev_info(&pdev->dev, "%s: done", __func__);
-  return 0;
+  return;
 }

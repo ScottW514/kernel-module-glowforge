@@ -20,6 +20,7 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
+#include <linux/filelock.h>
 #include "cnc_private.h"
 #include "device_attr.h"
 #include "notifiers.h"
@@ -90,7 +91,7 @@ static int pulsedev_flock(struct file *filp, int cmd, struct file_lock *fl)
 {
   DEV_SELF_FROM_FILP(filp);
   /* Arm or disarm the dead man's switch */
-  self->deadman_switch_active = (fl->fl_type != F_UNLCK);
+  self->deadman_switch_active = (fl->c.flc_type != F_UNLCK);
   dev_info(dev, "dms is %s", (self->deadman_switch_active) ? "active" : "inactive");
   return 0;
 }
