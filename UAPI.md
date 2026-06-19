@@ -1,5 +1,5 @@
 ## OpenGlow Glowforge Kernel Module User API Documentation
-(C) Copyright 2020 Scott Wiederhold    
+(C) Copyright 2020-2026 Scott Wiederhold    
 This work is licensed under a Creative Commons Attribution-ShareAlike 4.0 International License.
 
 This documentation is provided as is without warranty of any kind.  Use at your own risk.

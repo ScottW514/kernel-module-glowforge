@@ -3,7 +3,7 @@
  *
  * I2C driver for the Glowforge head.
  *
- * Copyright (C) 2020 Scott Wiederhold <s.e.wiederhold@gmail.com>
+ * Copyright (C) 2020-2026 Scott Wiederhold <s.e.wiederhold@gmail.com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
