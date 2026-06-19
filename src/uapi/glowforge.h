@@ -55,6 +55,7 @@
 #define ATTR_STEP_FREQ            step_freq
 #define ATTR_RUN                  run
 #define ATTR_STOP                 stop
+#define ATTR_HALT                 halt
 #define ATTR_RESUME               resume
 #define ATTR_DISABLE              disable
 #define ATTR_ENABLE               enable
@@ -62,6 +63,7 @@
 #define ATTR_LASER_LATCH          laser_latch
 #define ATTR_MOTOR_LOCK           motor_lock
 #define ATTR_POSITION             position
+#define ATTR_FREE                 free
 #define ATTR_SDMA_CONTEXT         sdma_context
 #define ATTR_X_MODE               x_mode
 #define ATTR_X_DECAY              x_decay
@@ -125,9 +127,11 @@
 #define ATTR_FAULTS_PATH          SYSFS_ATTR_DIR STR(ATTR_FAULTS)
 #define ATTR_IGNORED_FAULTS_PATH  SYSFS_ATTR_DIR STR(ATTR_IGNORED_FAULTS)
 #define ATTR_POSITION_PATH        SYSFS_ATTR_DIR STR(ATTR_POSITION)
+#define ATTR_FREE_PATH            SYSFS_ATTR_DIR STR(ATTR_FREE)
 #define ATTR_LASER_LATCH_PATH     SYSFS_ATTR_DIR STR(ATTR_LASER_LATCH)
 #define ATTR_RUN_PATH             SYSFS_ATTR_DIR STR(ATTR_RUN)
 #define ATTR_STOP_PATH            SYSFS_ATTR_DIR STR(ATTR_STOP)
+#define ATTR_HALT_PATH            SYSFS_ATTR_DIR STR(ATTR_HALT)
 #define ATTR_RESUME_PATH          SYSFS_ATTR_DIR STR(ATTR_RESUME)
 #define ATTR_DISABLE_PATH         SYSFS_ATTR_DIR STR(ATTR_DISABLE)
 #define ATTR_X_MODE_PATH          SYSFS_ATTR_DIR STR(ATTR_X_MODE)

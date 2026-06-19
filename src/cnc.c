@@ -635,7 +635,7 @@ int cnc_resume(struct cnc *self, uint32_t laser_delay_steps)
 
 /**
  * Idle: do nothing
- * Running: stop cut
+ * Running: stop cut (controlled deceleration)
  * Disabled: do nothing (remain in disabled state)
  * Fault: do nothing (return error)
  */
@@ -657,6 +657,38 @@ int cnc_stop(struct cnc *self)
     case STATE_RUNNING:
       /* Start a controlled deceleration. */
       _cnc_decel_start(self);
+      break;
+  }
+
+  spin_unlock_bh(&self->status_lock);
+  return ret;
+}
+
+
+/**
+ * Idle: do nothing
+ * Running: stop cut instantly (no deceleration; may lose steps at speed)
+ * Disabled: do nothing (remain in disabled state)
+ * Fault: do nothing (return error)
+ */
+int cnc_halt(struct cnc *self)
+{
+  int ret = 0;
+  spin_lock_bh(&self->status_lock);
+
+  switch (self->status.state) {
+    case STATE_IDLE:
+    case STATE_DISABLED:
+      break;
+
+    case STATE_FAULT:
+    default:
+      ret = -EPERM;
+      break;
+
+    case STATE_RUNNING:
+      /* Stop processing pulse data immediately. */
+      _driver_stop(self, STATE_IDLE);
       break;
   }
 

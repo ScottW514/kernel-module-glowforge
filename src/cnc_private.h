@@ -57,12 +57,23 @@ struct cnc;
 int cnc_run(struct cnc *self);
 
 /**
- * Immediately stops the SDMA script and returns to the idle state.
+ * Begins a controlled deceleration. At the end of the deceleration period,
+ * the SDMA script is stopped and the idle state is entered.
  *
  * @return 0 on success
  *         -EPERM if the driver is in the fault state.
  */
 int cnc_stop(struct cnc *self);
+
+/**
+ * Immediately stops the SDMA script and returns to the idle state.
+ * This will likely cause the motors to miss steps if they are running at
+ * high speeds.
+ *
+ * @return 0 on success
+ *         -EPERM if the driver is in the fault state.
+ */
+int cnc_halt(struct cnc *self);
 
 /**
  * Performs a controlled acceleration, running backward through `num_steps`
@@ -268,6 +279,12 @@ uint32_t cnc_buffer_fifo_start_phys(struct cnc *self);
  * May sleep; not safe to call from atomic context.
  */
 int cnc_buffer_is_empty(struct cnc *self);
+
+/**
+ * Returns the number of bytes available in the pulse data buffer.
+ * May sleep; not safe to call from atomic context.
+ */
+size_t cnc_buffer_get_free_space(struct cnc *self);
 
 /**
  * Returns the total number of bytes enqueued in the pulse data buffer since

@@ -158,6 +158,16 @@ int cnc_buffer_is_empty(struct cnc *self)
   return kfifo_is_empty(&self->pulsebuf_fifo);
 }
 
+/* may sleep */
+size_t cnc_buffer_get_free_space(struct cnc *self)
+{
+  size_t avail;
+  cnc_buffer_sync_head(self);
+  avail = kfifo_avail(&self->pulsebuf_fifo);
+  /* subtract the gap size */
+  return (avail > CNC_BUFFER_GAP_SIZE) ? avail-CNC_BUFFER_GAP_SIZE : 0;
+}
+
 uint32_t cnc_buffer_max_backtrack_length(struct cnc *self)
 {
   return min(self->pulsebuf_total_bytes,
