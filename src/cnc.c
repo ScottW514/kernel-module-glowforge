@@ -408,8 +408,8 @@ static enum hrtimer_restart ramp_update_tasklet_fn(struct hrtimer *timer)
 
 
 /**
- * Called when the SDMA engine executes a "done 3" instruction, setting the
- * interrupt flag for our channel.
+ * Called when the SDMA script raises the host interrupt flag for our channel
+ * (via a "notify 3" instruction, at a waypoint or at end-of-data).
  * This callback executes in tasklet context.
  */
 void cnc_sdma_interrupt(void *param)

@@ -9,7 +9,9 @@
 #   PS - 0x000c0400 (destination address frozen; 32-bit write size; start in write mode)
 #   CA (r7, 18) - GPIO lock bitmask (see below)
 #   scratch[5] (r7, 29) - FIFO "in" index (tail)
-#   scratch[6] (r7, 30) - direction; 0x00000001=forward, 0xFFFFFFFF=backward
+#   scratch[6] (r7, 30) - direction; 0x00000001=forward, 0xFFFFFFFF=backward.
+#                         Also zeroed at end-of-data and reused as an
+#                         "end-of-data interrupt already sent" sentinel (see alldone).
 #   scratch[7] (r7, 31) - waypoint interrupt counter (see below)
 
 # register usage:
@@ -245,7 +247,9 @@ endbyte:
   subi r0, 1        # always decrement, T flag set if result is zero
   st r0, (r7, 31)
   bf endbyte_done
-  done 3            # waypoint reached, trigger a host interrupt
+  notify 3          # waypoint reached; interrupt the host (notify, not done:
+                    # raise the interrupt without rescheduling the channel, so
+                    # the cut keeps streaming without a scheduling hiccup)
 
 endbyte_done:
   # if bit 2 in r1 was set, process another byte immmediately
@@ -261,7 +265,20 @@ endbyte_done:
 
 
 alldone:
-  done 3        # trigger a host interrupt
+  # Signal end-of-data to the host exactly once. scratch6 (direction) is set
+  # non-zero by the host before every run; we reuse it as an "already signaled"
+  # sentinel. If it is still non-zero, this is the first idle tick since the
+  # data ran out: zero it and interrupt the host. On subsequent idle ticks
+  # (scratch6 already 0) skip the interrupt, so we don't storm the host with
+  # end-of-data interrupts in the window before it disables the timer event.
+  ld r0, (r7, 30)   # get direction
+  cmpeqi r0, 0
+  bt alldone_wait   # already signaled; just wait
+  ldi r0, 0
+  st r0, (r7, 30)   # zero direction (sentinel: end-of-data signaled)
+  notify 3          # interrupt the host (notify, not done: no reschedule)
+
+alldone_wait:
   done 4
 
   # when script is restarted, jump back to beginning
