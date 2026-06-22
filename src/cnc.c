@@ -88,12 +88,22 @@ struct gpio_desc {
 #define RAMP_MIN_STEP_FREQUENCY               900
 
 /**
- * During a controlled acceleration/deceleration, the factor by which the
- * current step frequency is increased/decreased every update.
- * Treated as an inverse power of 2, so 3 corresponds to
- *   freq +=/-= freq >> 3 (at every step, add/subtract 1/8th of orig. step freq)
+ * Number of ramp updates per second, derived from the update interval.
+ * The ramp rate is specified in Hz/s, so the per-update step-frequency delta
+ * is (ramp_rate / RAMP_UPDATES_PER_SEC).
  */
-#define STEP_FREQUENCY_RAMP_FACTOR            3
+#define RAMP_UPDATES_PER_SEC                  (NSEC_PER_SEC / RAMP_UPDATE_INTERVAL_NS)
+
+/**
+ * Controlled acceleration/deceleration rate, in Hz/s (the amount by which the
+ * step frequency is changed per second). Settable at runtime via the
+ * "ramp_rate" attribute. The bounds and default match the factory firmware;
+ * the default of 125000 Hz/s reproduces the legacy behavior (freq >> 3 per
+ * 10 ms update) at the default 10 kHz step frequency.
+ */
+#define RAMP_RATE_MIN_HZ_PER_S                10000
+#define RAMP_RATE_MAX_HZ_PER_S                500000
+#define RAMP_RATE_DEFAULT_HZ_PER_S            125000
 
 
 static const struct pwm_channel_config laser_pwm_config = {
@@ -204,6 +214,33 @@ u32 cnc_get_step_frequency(struct cnc *self)
 }
 
 
+u32 cnc_get_ramp_rate_hz_per_s(struct cnc *self)
+{
+  return self->ramp_step_freq_delta * RAMP_UPDATES_PER_SEC;
+}
+
+
+int cnc_set_ramp_rate_hz_per_s(struct cnc *self, u32 hz_per_s)
+{
+  int ret = 0;
+  if (hz_per_s < RAMP_RATE_MIN_HZ_PER_S || hz_per_s > RAMP_RATE_MAX_HZ_PER_S) {
+    return -ERANGE;
+  }
+
+  spin_lock_bh(&self->status_lock);
+  /* Ramp rate changes are forbidden while running */
+  /* (this includes controlled acceleration/deceleration) */
+  if (unlikely(self->status.state == STATE_RUNNING)) {
+    ret = -EBUSY;
+  } else {
+    self->ramp_step_freq_delta = hz_per_s / RAMP_UPDATES_PER_SEC;
+  }
+  spin_unlock_bh(&self->status_lock);
+
+  return ret;
+}
+
+
 int cnc_set_step_frequency(struct cnc *self, u32 freq)
 {
   int ret = 0;
@@ -219,7 +256,7 @@ int cnc_set_step_frequency(struct cnc *self, u32 freq)
   } else {
     self->step_freq = freq;
     self->ramp_step_freq = freq;
-    self->ramp_step_freq_delta = freq >> STEP_FREQUENCY_RAMP_FACTOR;
+    /* ramp_step_freq_delta is independent of step_freq; it is set via ramp_rate */
   }
   spin_unlock_bh(&self->status_lock);
 
@@ -1174,6 +1211,7 @@ int cnc_probe(struct platform_device *pdev)
   spin_lock_init(&self->status_lock);
   tasklet_init(&self->fault_tasklet, fault_tasklet_fn, (unsigned long)self);
   cnc_set_step_frequency(self, STEP_FREQUENCY_DEFAULT);
+  cnc_set_ramp_rate_hz_per_s(self, RAMP_RATE_DEFAULT_HZ_PER_S);
   hrtimer_init(&self->ramp_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL_SOFT);
   self->ramp_timer.function = ramp_update_tasklet_fn;
   hrtimer_init(&self->charge_pump_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);

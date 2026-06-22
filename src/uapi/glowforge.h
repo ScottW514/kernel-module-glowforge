@@ -53,6 +53,7 @@
 #define ATTR_FAULTS               faults
 #define ATTR_IGNORED_FAULTS       ignored_faults
 #define ATTR_STEP_FREQ            step_freq
+#define ATTR_RAMP_RATE            ramp_rate
 #define ATTR_RUN                  run
 #define ATTR_STOP                 stop
 #define ATTR_HALT                 halt
@@ -139,6 +140,7 @@
 #define ATTR_Y_MODE_PATH          SYSFS_ATTR_DIR STR(ATTR_Y_MODE)
 #define ATTR_Y_DECAY_PATH         SYSFS_ATTR_DIR STR(ATTR_Y_DECAY)
 #define ATTR_STEP_FREQ_PATH       SYSFS_ATTR_DIR STR(ATTR_STEP_FREQ)
+#define ATTR_RAMP_RATE_PATH       SYSFS_ATTR_DIR STR(ATTR_RAMP_RATE)
 #define ATTR_Z_STEP_PATH          SYSFS_ATTR_DIR STR(ATTR_Z_STEP)
 #define ATTR_MOTOR_LOCK_PATH      SYSFS_ATTR_DIR STR(ATTR_MOTOR_LOCK)
 

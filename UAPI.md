@@ -20,6 +20,7 @@ This documentation only applies to the OpenGlow fork.
     |---laser_latch:         (WO) Enable laser
     |---motor_lock:          (RW) Disable step output per motor
     |---position:            (RO) Current axis positions and loaded program size/progress
+    |---ramp_rate:           (RW) Accel/decel rate in Hz/s
     |---resume:              (WO) Resume paused program
     |---run:                 (WO) Run loaded program
     |---sdma_context:        (RO) Value of SDMA registers
@@ -154,6 +155,12 @@ Bytes: Value
 12-15: Program bytes processed  
 16-19: Program size in bytes
 20-31: Reserved  
+
+##### ramp_rate
+Read/Write, ASCII, 10000-500000  
+Controlled acceleration/deceleration rate in Hz/s — how fast the step frequency is ramped up or down during a controlled accel/decel (e.g. ```stop```, ```resume```). Default is 125,000.  
+Independent of ```step_freq```; the rate is constant rather than scaling with the target speed.  
+Cannot be changed while a program is running (returns -EBUSY).  
 
 ##### resume
 Write, ASCII, -2147483647 - 2147483647  

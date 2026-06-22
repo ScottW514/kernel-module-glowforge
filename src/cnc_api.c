@@ -148,6 +148,24 @@ static ssize_t step_freq_store(struct device *dev, struct device_attribute *attr
 }
 
 
+static ssize_t ramp_rate_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+  struct cnc *self = dev_get_drvdata(dev);
+  return scnprintf(buf, PAGE_SIZE, "%u\n", cnc_get_ramp_rate_hz_per_s(self));
+}
+
+
+static ssize_t ramp_rate_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
+{
+  struct cnc *self = dev_get_drvdata(dev);
+  unsigned long new_rate;
+  int ret = kstrtoul(buf, 10, &new_rate);
+  if (ret) { return ret; }
+  ret = cnc_set_ramp_rate_hz_per_s(self, new_rate);
+  return (ret == 0) ? count : ret;
+}
+
+
 static ssize_t ignored_faults_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
   struct cnc *self = dev_get_drvdata(dev);
@@ -292,6 +310,7 @@ DEFINE_DEVICE_ATTR(ATTR_STATE, S_IRUSR, state_show, NULL);
 DEFINE_DEVICE_ATTR(ATTR_FAULTS, S_IRUSR, faults_show, NULL);
 DEFINE_DEVICE_ATTR(ATTR_IGNORED_FAULTS, S_IRUSR|S_IWUSR, ignored_faults_show, ignored_faults_store);
 DEFINE_DEVICE_ATTR(ATTR_STEP_FREQ, S_IRUSR|S_IWUSR, step_freq_show, step_freq_store);
+DEFINE_DEVICE_ATTR(ATTR_RAMP_RATE, S_IRUSR|S_IWUSR, ramp_rate_show, ramp_rate_store);
 DEFINE_DEVICE_ATTR(ATTR_POSITION, S_IRUSR, position_show, NULL);
 DEFINE_DEVICE_ATTR(ATTR_FREE, S_IRUSR, free_show, NULL);
 DEFINE_DEVICE_ATTR(ATTR_SDMA_CONTEXT, S_IRUSR, sdma_context_show, NULL);
@@ -308,6 +327,7 @@ static struct attribute *cnc_attrs[] = {
   DEV_ATTR_PTR(ATTR_FAULTS),
   DEV_ATTR_PTR(ATTR_IGNORED_FAULTS),
   DEV_ATTR_PTR(ATTR_STEP_FREQ),
+  DEV_ATTR_PTR(ATTR_RAMP_RATE),
   DEV_ATTR_PTR(ATTR_RUN),
   DEV_ATTR_PTR(ATTR_STOP),
   DEV_ATTR_PTR(ATTR_HALT),

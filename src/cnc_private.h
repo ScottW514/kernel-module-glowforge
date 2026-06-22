@@ -193,6 +193,21 @@ u32 cnc_get_step_frequency(struct cnc *self);
 int cnc_set_step_frequency(struct cnc *self, u32 freq);
 
 /**
+ * Returns the controlled acceleration/deceleration rate in Hz/s.
+ */
+u32 cnc_get_ramp_rate_hz_per_s(struct cnc *self);
+
+/**
+ * Sets the controlled acceleration/deceleration rate in Hz/s.
+ *
+ * @param hz_per_s  Ramp rate in Hz/s
+ * @return          0 on success
+ *                  -ERANGE if hz_per_s is not within the valid range
+ *                  -EBUSY if the value cannot be set (e.g. driver is running)
+ */
+int cnc_set_ramp_rate_hz_per_s(struct cnc *self, u32 hz_per_s);
+
+/**
  * Sets the microstepping mode for a given axis.
  */
 int cnc_set_microstep_mode(struct cnc *self, enum cnc_axis axis, enum cnc_microstep_mode mode);
