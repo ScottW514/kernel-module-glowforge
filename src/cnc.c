@@ -105,6 +105,15 @@ struct gpio_desc {
 #define RAMP_RATE_MAX_HZ_PER_S                500000
 #define RAMP_RATE_DEFAULT_HZ_PER_S            125000
 
+/**
+ * Laser safety-line sampling. A free-running timer polls the LASER_ON and
+ * LASER_PGOOD inputs; every LASER_SAMPLE_WINDOW samples (~1 second) it latches
+ * the number of samples in which each line read low, exposed via the
+ * laser_on_sampled / laser_pgood_sampled attributes.
+ */
+#define LASER_SAMPLE_WINDOW                   255
+#define LASER_SAMPLE_INTERVAL_NS              (NSEC_PER_SEC / LASER_SAMPLE_WINDOW)
+
 
 static const struct pwm_channel_config laser_pwm_config = {
   "laser-pwm", BITS_TO_PERIOD_NS(LASER_PWM_BITS)
@@ -140,6 +149,7 @@ static const u32 sdma_script[] = {
 };
 
 static const ktime_t ramp_update_interval_ktime = RAMP_UPDATE_INTERVAL_NS;
+static const ktime_t laser_sample_interval_ktime = LASER_SAMPLE_INTERVAL_NS;
 static const ktime_t charge_pump_interval_ktime  = CHARGE_PUMP_INTERVAL_NS;
 
 extern struct kobject *glowforge_kobj;
@@ -892,6 +902,89 @@ static enum hrtimer_restart charge_pump_timer_cb(struct hrtimer *timer)
 }
 
 
+/*
+ * Laser-safety-chain readbacks. These expose the hardware safety signals for
+ * monitoring; actual enforcement is in the hardware AND-gate, not here.
+ * LASER_ON and LASER_PGOOD are active low, so their getters return the logical
+ * (asserted) state; the others return the raw pin level.
+ */
+int cnc_get_laser_enable(struct cnc *self)
+{
+  /* PIN_LASER_ON is the laser-enable / FIRE drive line. */
+  return gpio_get_value(self->gpios[PIN_LASER_ON]);
+}
+
+int cnc_get_laser_on(struct cnc *self)
+{
+  return !gpio_get_value(self->gpios[PIN_LASER_ON_READBACK]);
+}
+
+int cnc_get_laser_pgood(struct cnc *self)
+{
+  return !gpio_get_value(self->gpios[PIN_LASER_PGOOD]);
+}
+
+int cnc_get_button_latch(struct cnc *self)
+{
+  return gpio_get_value(self->gpios[PIN_BUTTON_LATCH]);
+}
+
+int cnc_get_interlock_latch_reset(struct cnc *self)
+{
+  return gpio_get_value(self->gpios[PIN_INTERLOCK_LATCH_RESET]);
+}
+
+int cnc_get_laser_on_sampled(struct cnc *self)
+{
+  return self->laser_on_sampled;
+}
+
+int cnc_get_laser_pgood_sampled(struct cnc *self)
+{
+  return self->laser_pgood_sampled;
+}
+
+/*
+ * Raw snapshot of the safety-chain GPIOs as a bitmask:
+ *   bit 0: LASER_ON   bit 1: LASER_ENABLE   bit 2: BUTTON_LATCH
+ *   bit 3: LASER_LATCH   bit 4: INTERLOCK_LATCH_RESET
+ */
+int cnc_get_interlock_circuit(struct cnc *self)
+{
+  int v = 0;
+  if (gpio_get_value(self->gpios[PIN_LASER_ON_READBACK]))     { v |= 1; }
+  if (gpio_get_value(self->gpios[PIN_LASER_ON]))              { v |= 2; }
+  if (gpio_get_value(self->gpios[PIN_BUTTON_LATCH]))          { v |= 4; }
+  if (gpio_get_value(self->gpios[PIN_LASER_LATCH_RESET]))     { v |= 8; }
+  if (gpio_get_value(self->gpios[PIN_INTERLOCK_LATCH_RESET])) { v |= 16; }
+  return v;
+}
+
+/*
+ * Free-running sampler. Counts how many of the last LASER_SAMPLE_WINDOW samples
+ * read each line low, latching the counts once per window (~1 s).
+ */
+static enum hrtimer_restart laser_sample_timer_cb(struct hrtimer *timer)
+{
+  struct cnc *self = container_of(timer, struct cnc, laser_sample_timer);
+  if (gpio_get_value(self->gpios[PIN_LASER_ON_READBACK]) == 0) {
+    self->laser_on_low_count++;
+  }
+  if (gpio_get_value(self->gpios[PIN_LASER_PGOOD]) == 0) {
+    self->laser_pgood_low_count++;
+  }
+  if (++self->laser_sample_count >= LASER_SAMPLE_WINDOW) {
+    self->laser_on_sampled = self->laser_on_low_count;
+    self->laser_pgood_sampled = self->laser_pgood_low_count;
+    self->laser_on_low_count = 0;
+    self->laser_pgood_low_count = 0;
+    self->laser_sample_count = 0;
+  }
+  hrtimer_forward_now(timer, laser_sample_interval_ktime);
+  return HRTIMER_RESTART;
+}
+
+
 enum cnc_state cnc_state(struct cnc *self)
 {
   enum cnc_state ret;
@@ -1216,6 +1309,8 @@ int cnc_probe(struct platform_device *pdev)
   self->ramp_timer.function = ramp_update_tasklet_fn;
   hrtimer_init(&self->charge_pump_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
   self->charge_pump_timer.function = charge_pump_timer_cb;
+  hrtimer_init(&self->laser_sample_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL_SOFT);
+  self->laser_sample_timer.function = laser_sample_timer_cb;
 
 #if INITIAL_STATE_DISABLED
   self->status.state = STATE_DISABLED;
@@ -1353,6 +1448,9 @@ int cnc_probe(struct platform_device *pdev)
   atomic_notifier_chain_register(&panic_notifier_list, &self->panic_notifier);
 #endif
 
+  /* Start the free-running laser-safety sampler now that the GPIOs are up. */
+  hrtimer_start(&self->laser_sample_timer, laser_sample_interval_ktime, HRTIMER_MODE_REL_SOFT);
+
   dev_info(&pdev->dev, "%s: done", __func__);
   return 0;
 
@@ -1389,6 +1487,7 @@ void cnc_remove(struct platform_device *pdev)
   sdma_set_channel_interrupt_callback(self->sdmac, NULL, NULL);
   hrtimer_cancel(&self->ramp_timer);
   hrtimer_cancel(&self->charge_pump_timer);
+  hrtimer_cancel(&self->laser_sample_timer);
 #if INSTALL_PANIC_HANDLER
   atomic_notifier_chain_unregister(&panic_notifier_list, &self->panic_notifier);
 #endif

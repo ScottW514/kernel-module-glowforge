@@ -59,6 +59,14 @@ enum {
   PIN_CHARGE_PUMP,
   PIN_LASER_LATCH_RESET,
   PIN_BEAM_LATCH_RESET,
+  /* Laser-safety-chain readback inputs (see cnc_get_laser_*/interlock_*/button_*).
+   * NOTE: PIN_LASER_ON above is the laser-ENABLE / FIRE drive line
+   * (DT "laser-enable-gpio"). PIN_LASER_ON_READBACK below reads back the gated
+   * LASER_ON output of the safety AND-gate (DT "laser-on-gpio"). */
+  PIN_LASER_ON_READBACK,
+  PIN_LASER_PGOOD,
+  PIN_BUTTON_LATCH,
+  PIN_INTERLOCK_LATCH_RESET,
   /* ---------- */
   NUM_GPIO_PINS
 };

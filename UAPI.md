@@ -12,12 +12,20 @@ This documentation only applies to the OpenGlow fork.
 ### SYSFS / Device Structure
 ```pre
 /sys/glowforge/cnc       <- Motion control, machine state
+    |---button_latch:        (RO) Button-latch line state
     |---disable:             (WO) Stop all motion and turn off stepper motors and laser
     |---enable:              (WO) Power on steppers and make ready for run
     |---faults:              (RO) Status of stepper axis faults
     |---halt:                (WO) Immediately stop running program (no deceleration)
     |---ignored_faults:      (RW) Stepper axis faults to ignore      
+    |---interlock_circuit:   (RO) Safety-chain GPIO snapshot (bitmask)
+    |---interlock_latch_reset: (RO) Interlock latch-reset line state
+    |---laser_enable:        (RO) Laser-enable (FIRE) line state
     |---laser_latch:         (WO) Enable laser
+    |---laser_on:            (RO) Gated LASER_ON output state
+    |---laser_on_sampled:    (RO) LASER_ON low-sample count (last ~1s)
+    |---laser_pgood:         (RO) Laser power-good state
+    |---laser_pgood_sampled: (RO) LASER_PGOOD low-sample count (last ~1s)
     |---motor_lock:          (RW) Disable step output per motor
     |---position:            (RO) Current axis positions and loaded program size/progress
     |---ramp_rate:           (RW) Accel/decel rate in Hz/s
@@ -98,10 +106,6 @@ This documentation only applies to the OpenGlow fork.
     |---brightness:          (RW) Output level
     |---(standard LED interfaces not used)
 
-/sys/class/leds/interlock_reset  <- Reset interlock circuit
-    |---brightness:          (RW) Output level
-    |---(standard LED interfaces not used)
-
 /sys/class/leds/lid_led_X  <- Big Button LED interfaces
     |---pulse_off:           (RW) Off time in milliseconds
     |---pulse_on:            (RW) On time in milliseconds
@@ -113,6 +117,10 @@ This documentation only applies to the OpenGlow fork.
 ### SYSFS Interface Descriptions
 ---
 #### /sys/glowforge/cnc
+##### button_latch
+Read, ASCII, 0-1  
+Raw state of the button-latch line.  
+
 ##### disable
 Write, ASCII, 1  
 Writing "1" to this will switch the device to the "disabled" state.
@@ -138,6 +146,35 @@ Has no effect unless the device is in the "running" state.
 Read/Write, ASCII, 0-7  
 Sets which stepper driver faults to ignore.
 Bits: 0: X Axis, 1: Y1 Axis, 2: Y2 Axis  
+
+##### interlock_circuit
+Read, ASCII, 0-31  
+Raw snapshot of the laser-safety-chain GPIOs as a bitmask. Monitoring only; enforcement is in the hardware AND-gate.  
+Bits: 0: LASER_ON, 1: LASER_ENABLE, 2: BUTTON_LATCH, 3: LASER_LATCH, 4: INTERLOCK_LATCH_RESET  
+
+##### interlock_latch_reset
+Read, ASCII, 0-1  
+State of the interlock latch-reset line (a driven output, initialised low, read back via SION). Replaces the former ```interlock_reset``` LED-class interface.  
+
+##### laser_enable
+Read, ASCII, 0-1  
+State of the laser-enable (FIRE) drive line.  
+
+##### laser_on
+Read, ASCII, 0-1  
+Logical state of the gated LASER_ON output of the hardware safety AND-gate (line is active low; 1 = laser on).  
+
+##### laser_on_sampled
+Read, ASCII, 0-255  
+Number of samples in the last ~1 second window (255 samples, one every ~3.9 ms) in which the LASER_ON line read low. Updated once per window.  
+
+##### laser_pgood
+Read, ASCII, 0-1  
+Logical state of the laser power-good line (active low; 1 = power good).  
+
+##### laser_pgood_sampled
+Read, ASCII, 0-255  
+Number of samples in the last ~1 second window (255 samples) in which the LASER_PGOOD line read low. Updated once per window.  
 
 ##### motor_lock
 Read/Write, ASCII, 0-15  
@@ -440,5 +477,4 @@ Both values are internally truncated to multiples of MSECS_PER_UPDATE.
 #### /sys/class/leds/camera_mux_oe
 This controls the output on the camera multiplexer.  The ```brightness``` value should be set to 255.  Setting a value of 0 will shut the output off.  There is no reason to ever shut the output off.  
 
-#### /sys/class/leds/interlock_reset
-This resets the interlock safe circuit.  Setting ```brightness``` to 255 resets the circuit.  This should be set to 0 for normal operation.
+Note: the interlock latch-reset line is now exposed by the cnc driver as the read-only ```interlock_latch_reset``` attribute (it was previously the ```/sys/class/leds/interlock_reset``` LED).

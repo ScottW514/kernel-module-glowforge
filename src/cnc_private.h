@@ -208,6 +208,21 @@ u32 cnc_get_ramp_rate_hz_per_s(struct cnc *self);
 int cnc_set_ramp_rate_hz_per_s(struct cnc *self, u32 hz_per_s);
 
 /**
+ * Laser-safety-chain readbacks (monitoring only).
+ * LASER_ON / LASER_PGOOD are active low; their getters return the logical
+ * (asserted) state. The *_sampled getters return the per-window low-sample
+ * count; cnc_get_interlock_circuit returns a raw bitmask of the safety GPIOs.
+ */
+int cnc_get_laser_enable(struct cnc *self);
+int cnc_get_laser_on(struct cnc *self);
+int cnc_get_laser_pgood(struct cnc *self);
+int cnc_get_button_latch(struct cnc *self);
+int cnc_get_interlock_latch_reset(struct cnc *self);
+int cnc_get_laser_on_sampled(struct cnc *self);
+int cnc_get_laser_pgood_sampled(struct cnc *self);
+int cnc_get_interlock_circuit(struct cnc *self);
+
+/**
  * Sets the microstepping mode for a given axis.
  */
 int cnc_set_microstep_mode(struct cnc *self, enum cnc_axis axis, enum cnc_microstep_mode mode);
@@ -421,6 +436,15 @@ struct cnc {
   struct hrtimer ramp_timer;
   /** Toggles the charge pump input during a cut to keep the laser on. */
   struct hrtimer charge_pump_timer;
+  /** Free-running timer that samples the LASER_ON / LASER_PGOOD inputs. */
+  struct hrtimer laser_sample_timer;
+  /** Working low-sample counts for the in-progress sampling window. */
+  u32 laser_on_low_count;
+  u32 laser_pgood_low_count;
+  u32 laser_sample_count;
+  /** Latched low-sample counts from the last window (laser_*_sampled attrs). */
+  u32 laser_on_sampled;
+  u32 laser_pgood_sampled;
 #if INSTALL_PANIC_HANDLER
   /** Allows us to shut everything down if there's a panic */
   struct notifier_block panic_notifier;

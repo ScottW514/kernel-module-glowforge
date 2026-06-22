@@ -278,6 +278,14 @@ void cnc_notify_state_changed(struct cnc *self)
   } \
   static DEVICE_ATTR(name, S_IWUSR, NULL, name##_store)
 
+/* Read-only attribute backed by an int-returning cnc_get_* function. */
+#define _DEFINE_RO_GETTER_ATTR(name, fn) \
+  static ssize_t name##_show(struct device *dev, struct device_attribute *attr, char *buf) { \
+    return scnprintf(buf, PAGE_SIZE, "%d\n", fn(dev_get_drvdata(dev))); \
+  } \
+  static DEVICE_ATTR(name, S_IRUSR, name##_show, NULL)
+#define DEFINE_RO_GETTER_ATTR(name, fn) _DEFINE_RO_GETTER_ATTR(name, fn)
+
 /* Negative values: accelerate backwards, then decelerate and stop */
 /* Positive values: accelerate forward, reenable laser, and continue */
 /* Zero: accelerate forward, continue without reenabling laser */
@@ -321,6 +329,14 @@ DEFINE_DECAY_ATTR(ATTR_X_DECAY, AXIS_X);
 DEFINE_DECAY_ATTR(ATTR_Y_DECAY, AXIS_Y);
 DEFINE_BOOL_ATTR(ATTR_Z_STEP, cnc_single_z_step);
 DEFINE_BOOL_ATTR(ATTR_LASER_LATCH, cnc_set_laser_latch);
+DEFINE_RO_GETTER_ATTR(ATTR_LASER_ENABLE, cnc_get_laser_enable);
+DEFINE_RO_GETTER_ATTR(ATTR_LASER_ON, cnc_get_laser_on);
+DEFINE_RO_GETTER_ATTR(ATTR_LASER_ON_SAMPLED, cnc_get_laser_on_sampled);
+DEFINE_RO_GETTER_ATTR(ATTR_LASER_PGOOD, cnc_get_laser_pgood);
+DEFINE_RO_GETTER_ATTR(ATTR_LASER_PGOOD_SAMPLED, cnc_get_laser_pgood_sampled);
+DEFINE_RO_GETTER_ATTR(ATTR_INTERLOCK_CIRCUIT, cnc_get_interlock_circuit);
+DEFINE_RO_GETTER_ATTR(ATTR_INTERLOCK_LATCH_RESET, cnc_get_interlock_latch_reset);
+DEFINE_RO_GETTER_ATTR(ATTR_BUTTON_LATCH, cnc_get_button_latch);
 
 static struct attribute *cnc_attrs[] = {
   DEV_ATTR_PTR(ATTR_STATE),
@@ -344,6 +360,14 @@ static struct attribute *cnc_attrs[] = {
   DEV_ATTR_PTR(ATTR_Y_DECAY),
   DEV_ATTR_PTR(ATTR_Z_STEP),
   DEV_ATTR_PTR(ATTR_MOTOR_LOCK),
+  DEV_ATTR_PTR(ATTR_LASER_ENABLE),
+  DEV_ATTR_PTR(ATTR_LASER_ON),
+  DEV_ATTR_PTR(ATTR_LASER_ON_SAMPLED),
+  DEV_ATTR_PTR(ATTR_LASER_PGOOD),
+  DEV_ATTR_PTR(ATTR_LASER_PGOOD_SAMPLED),
+  DEV_ATTR_PTR(ATTR_INTERLOCK_CIRCUIT),
+  DEV_ATTR_PTR(ATTR_INTERLOCK_LATCH_RESET),
+  DEV_ATTR_PTR(ATTR_BUTTON_LATCH),
   NULL
 };
 
