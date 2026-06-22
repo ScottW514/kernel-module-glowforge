@@ -15,6 +15,7 @@ This documentation only applies to the OpenGlow fork.
     |---disable:             (WO) Stop all motion and turn off stepper motors and laser
     |---enable:              (WO) Power on steppers and make ready for run
     |---faults:              (RO) Status of stepper axis faults
+    |---halt:                (WO) Immediately stop running program (no deceleration)
     |---ignored_faults:      (RW) Stepper axis faults to ignore      
     |---laser_latch:         (WO) Enable laser
     |---motor_lock:          (RW) Disable step output per motor
@@ -24,7 +25,7 @@ This documentation only applies to the OpenGlow fork.
     |---sdma_context:        (RO) Value of SDMA registers
     |---state:               (RO) Current operating state
     |---step_freq:           (RW) Step frequency
-    |---stop:                (WO) Stop/Pause currently running program
+    |---stop:                (WO) Controlled stop of running program (decelerate to idle)
     |---x_decay:             (RW) Enable/Disable X-Axis decay
     |---x_mode:              (RW) X-Axis Micro-stepping mode
     |---y_decay:             (RW) Enable/Disable Y-Axis decay
@@ -124,6 +125,14 @@ Read, ASCII, 0-7
 Indicates any faults that have been set by the stepper drivers.
 Bits: 0: X Axis, 1: Y1 Axis, 2: Y2 Axis  
 
+##### halt
+Write, ASCII, 1  
+Writing "1" performs an immediate stop of a running program: pulse-data processing ends at once with no deceleration, and the device switches to the "idle" state.  
+As with ```stop```, the laser-enable line is released (laser off) and the step lines are driven low, while the stepper motors remain powered.  
+Unlike ```stop```, there is no controlled ramp-down, so if the machine is moving at speed the motors may lose steps (overshoot) and the reported position may no longer be accurate.  
+Use ```halt``` for an immediate/emergency stop where stopping promptly matters more than preserving position; use ```stop``` for a clean, position-preserving stop.  
+Has no effect unless the device is in the "running" state.
+
 ##### ignored_faults
 Read/Write, ASCII, 0-7  
 Sets which stepper driver faults to ignore.
@@ -174,7 +183,11 @@ Step frequency in Hz. Default is 10,000.
 
 ##### stop
 Write, ASCII, 1  
-Writing "1" to this will disable laser, decelerate the device to a stop, and switch to the "idle" state from "run".
+Writing "1" performs a controlled stop of a running program: the step frequency ramps down to the minimum, motion comes to a smooth stop, and the device switches to the "idle" state.  
+Because the deceleration is controlled, no steps are lost, so the reported position stays accurate.  
+Once stopped, the laser-enable line is released (laser off) and the step lines are driven low; the stepper motors remain powered.  
+For an immediate stop with no deceleration (at the cost of possibly losing steps), see ```halt```.  
+Has no effect unless the device is in the "running" state.
 
 ##### x_decay
 Read/Write, ASCII, 0-1  
