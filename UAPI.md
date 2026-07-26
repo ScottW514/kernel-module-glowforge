@@ -496,9 +496,12 @@ step/laser command; if bit 7 is set, the low 7 bits are a laser power level:
     bit 3  Y_DIR         bit 7  0 = step byte, 1 = power byte (bits 0-6 = power)
 
 X/Y convention: DIR bit set = negative direction for X, positive for Y
-(Y1/Y2 are driven complementary). Z convention: TO BE CONFIRMED ON HARDWARE
-(the script counts Z_DIR=1 as +Z in the position counter; verify physical
-lens direction before trusting Z streams - audit N3).
+(Y1/Y2 are driven complementary). Z convention (hardware-verified
+2026-07-26, clean single-move observation): **bit 6 SET moves the lens UP,
+away from the bed = positive Z**; the position counter counts it as +Z and
+the ```z_step``` attr follows the same sense (1 = away from bed). Note:
+gfutilities pulsedata historically decoded this inverted (fixed alongside
+this documentation).
 
 **Fixed byte density - no per-byte timing.** The engine consumes exactly one
 byte per timer tick at ```step_freq```. All velocity is expressed as step

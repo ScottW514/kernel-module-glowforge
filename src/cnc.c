@@ -963,6 +963,9 @@ int cnc_single_z_step(struct cnc *self, bool direction)
   z_step_gpio = self->gpios[PIN_Z_STEP];
   z_dir_gpio = self->gpios[PIN_Z_DIR];
 
+  /* Hardware-verified (2026-07-26): Z_DIR driven HIGH moves the lens UP,
+   * away from the bed - the documented attr convention (1 = positive = away
+   * from the bed) is physically true with the raw drive. */
   gpio_set_value(z_dir_gpio, direction);
   gpio_set_value(z_step_gpio, 1);
   udelay(2); /* DRV8818 wants a minimum 1us pulse duration */
