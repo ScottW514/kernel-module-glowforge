@@ -205,6 +205,34 @@ static int load_sdma_script(struct cnc *self)
 }
 
 
+/**
+ * Verifies the SDMA program RAM still holds our script, reloading it if
+ * anything clobbered it. The imx-sdma driver loads the NXP RAM firmware
+ * asynchronously (request_firmware_nowait), at an arbitrary time relative to
+ * our probe; the script origin is placed above the firmware's RAM span, but
+ * firmware growth would silently corrupt the script again, so trust nothing.
+ * Rewrites only program memory — never the channel context, which holds live
+ * position/head/tail state between runs. May sleep (channel-0 transfers);
+ * call only outside atomic context, before a run starts.
+ */
+static int verify_sdma_script(struct cnc *self)
+{
+  u32 readback[ARRAY_SIZE(sdma_script)];
+  int ret = sdma_fetch_datamem(self->sdma, readback, sizeof(readback),
+    self->sdma_script_origin);
+  if (ret) {
+    dev_err(self->dev, "failed to read back SDMA script: %d", ret);
+    return ret;
+  }
+  if (memcmp(readback, sdma_script, sizeof(sdma_script)) != 0) {
+    dev_warn(self->dev, "SDMA script corrupted (RAM firmware overlap?); reloading");
+    ret = sdma_write_datamem(self->sdma, (void *)sdma_script,
+      sizeof(sdma_script), self->sdma_script_origin);
+  }
+  return ret;
+}
+
+
 int cnc_get_position(struct cnc *self, struct cnc_position *pos)
 {
   /* Fetch current byte and head position from sdma engine */
@@ -540,6 +568,12 @@ static int cnc_run_with_options(struct cnc *self, struct cnc_run_options opts)
     if (cnc_buffer_is_empty(self)) {
       dev_err(self->dev, "cannot start cut; no data enqueued");
       return -ENODATA;
+    }
+
+    /* Ensure the SDMA program RAM is intact before starting. (may sleep) */
+    ret = verify_sdma_script(self);
+    if (ret) {
+      return ret;
     }
 
     /* If backtracking, clamp num_steps to ensure we stop before hitting the */
