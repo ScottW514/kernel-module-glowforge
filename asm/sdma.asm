@@ -11,13 +11,19 @@
 #   scratch[5] (r7, 29) - FIFO "in" index (tail)
 #   scratch[6] (r7, 30) - direction; 0x00000001=forward, 0xFFFFFFFF=backward.
 #                         Also zeroed at end-of-data and reused as an
-#                         "end-of-data interrupt already sent" sentinel (see alldone).
+#                         "end-of-data interrupt already sent" sentinel (see
+#                         alldone). While zero the script is PARKED: it forces
+#                         the laser/step lines low each tick, ignores newly
+#                         appended data, and periodically re-raises the
+#                         end-of-data interrupt. The host must write a fresh
+#                         non-zero direction before restarting a run.
 #   scratch[7] (r7, 31) - waypoint interrupt counter (see below)
 
 # register usage:
 #   r0 - temporary
 #   r1 - internal flags (see below)
-#   r2 - current pulse data byte/temporary
+#   r2 - current pulse data byte/temporary; while parked at end-of-data,
+#        repurposed as the idle re-notify counter (see alldone_renotify)
 #   r3 - GPIO pin values to be written
 #   scratch[0] (r7, 24) - X position in steps (signed)
 #   scratch[1] (r7, 25) - Y position in steps (signed)
@@ -76,6 +82,16 @@ fifo_consume_byte:
   stf r1, 0xc8      # (PD) clear EPIT interrupt flag
 
 fifo_consume_byte_no_iflag_clear:
+  # Parked guard: scratch6 == 0 means end-of-data has been signaled and the
+  # host has not restarted us. Data appended by the host in this window must
+  # NOT be consumed: the increment is 0, so the head would never advance and
+  # the same byte (laser bit included) would re-execute on every timer tick.
+  # Stay parked (alldone also re-forces the safe GPIO state) until the host
+  # writes a fresh non-zero direction into scratch6 and restarts the run.
+  ld r0, (r7, 30)
+  cmpeqi r0, 0
+  bt alldone
+
   # protect against null pointer deref; exit if buffer address is 0
   cmpeqi r6, 0
   bt alldone
@@ -263,27 +279,47 @@ endbyte_done:
   bt fifo_consume_byte
 
 
+restart_relay:
+  # Relay hop: "start" is beyond 8-bit branch displacement from the script
+  # tail (the end-of-data handling below grew the script), so the restart
+  # path branches here first. Reachable only by label (the bt above is
+  # always taken).
+  btsti r1, 0   # always true
+  bt start
+
 
 alldone:
-  # Signal end-of-data to the host exactly once. scratch6 (direction) is set
-  # non-zero by the host before every run; we reuse it as an "already signaled"
-  # sentinel. If it is still non-zero, this is the first idle tick since the
-  # data ran out: zero it and interrupt the host. On subsequent idle ticks
-  # (scratch6 already 0) skip the interrupt, so we don't storm the host with
-  # end-of-data interrupts in the window before it disables the timer event.
+  # SAFETY FIRST: force the laser and step lines low and write the GPIO
+  # register on every idle tick, before any signaling. Without this, an
+  # underrun mid-fire leaves the last byte's laser bits driven at a
+  # standstill until the (softirq-scheduled) host stop path runs. Idempotent
+  # and harmless on normal completion; the restart path re-inits r3.
+  bclri r3, 30  # LASER_ENABLE: pin 30 in GPIO bank
+  bclri r3, 31  # LASER_ON_HEAD: pin 31 in GPIO bank
+  bclri r3, 22  # X_STEP: pin 22 in GPIO bank
+  bclri r3, 20  # Y1_STEP: pin 20 in GPIO bank
+  bclri r3, 29  # Y2_STEP: pin 29 in GPIO bank
+  bclri r3, 21  # Z_STEP: pin 21 in GPIO bank
+  stf r3, 0x2b  # (MD|SZ32|FL) write to GPIO register
+
+  # Signal end-of-data to the host. scratch6 (direction) is set non-zero by
+  # the host before every run; we reuse it as an "already signaled" sentinel.
+  # If it is still non-zero, this is the first idle tick since the data ran
+  # out: zero it, reset the re-notify counter, and interrupt the host.
   ld r0, (r7, 30)   # get direction
   cmpeqi r0, 0
-  bt alldone_wait   # already signaled; just wait
+  bt alldone_renotify # already signaled; wait (and periodically re-notify)
   ldi r0, 0
   st r0, (r7, 30)   # zero direction (sentinel: end-of-data signaled)
+  ldi r2, 0         # reset idle re-notify counter (r2 is free while parked)
   notify 3          # interrupt the host (notify, not done: no reschedule)
 
 alldone_wait:
   done 4
 
-  # when script is restarted, jump back to beginning
+  # when script is restarted, jump back to beginning (via the relay)
   btsti r1, 0   # always true
-  bt start
+  bt restart_relay
 
 
 
@@ -314,3 +350,20 @@ power_done:
   bseti r1, 2
   btsti r1, 0   # always true
   bt endbyte    # unconditional jump
+
+
+alldone_renotify:
+  # Self-healing end-of-data signal: two notifies raised before the ARM
+  # services the first merge into a single host callback, so the end-of-data
+  # notify can be lost by coalescing with a waypoint notify. Re-raise it
+  # every 255 parked iterations until the host stops the EPIT. (The old
+  # script signaled on every idle tick, which stormed the host; this is the
+  # middle ground: a lost signal heals within a few ms at the 200 kHz
+  # ceiling.) Placed at the tail to keep all branch displacements in range.
+  addi r2, 1
+  cmpeqi r2, 255
+  bf alldone_wait
+  ldi r2, 0
+  notify 3
+  btsti r1, 0   # always true
+  bt alldone_wait
