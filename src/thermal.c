@@ -387,9 +387,9 @@ int thermal_probe(struct platform_device *pdev)
 failed_create_link:
   sysfs_remove_group(&pdev->dev.kobj, &thermal_attr_group);
 failed_create_group:
-  io_release_pwms(self->pwms, THERMAL_NUM_PWM_CHANNELS);
-failed_tach_init:
   thermal_teardown_tachs(self);
+failed_tach_init:
+  io_release_pwms(self->pwms, THERMAL_NUM_PWM_CHANNELS);
 failed_pwm_init:
   io_release_gpios(self->gpios, THERMAL_NUM_GPIO_PINS);
 failed_io_init:
@@ -405,7 +405,7 @@ void thermal_remove(struct platform_device *pdev)
   thermal_make_safe(self);
   dms_notifier_chain_unregister(&dms_notifier_list, &self->dms_notifier);
   hrtimer_cancel(&self->heater_pwm_timer);
-  sysfs_remove_link(&pdev->dev.kobj, THERMAL_GROUP_NAME);
+  sysfs_remove_link(glowforge_kobj, THERMAL_GROUP_NAME);
   sysfs_remove_group(&pdev->dev.kobj, &thermal_attr_group);
   io_release_pwms(self->pwms, THERMAL_NUM_PWM_CHANNELS);
   thermal_teardown_tachs(self);

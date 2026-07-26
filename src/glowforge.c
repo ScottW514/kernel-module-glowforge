@@ -178,9 +178,9 @@ static int __init glowforge_init(void)
 failed_cnc_init:
   platform_driver_unregister(&thermal);
 failed_thermal_init:
-  spi_unregister_driver(&pic_driver);
-failed_head_init:
   i2c_del_driver(&head);
+failed_head_init:
+  spi_unregister_driver(&pic_driver);
 failed_pic_init:
   kobject_put(glowforge_kobj);
   return status;

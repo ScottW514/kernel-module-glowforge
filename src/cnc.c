@@ -1493,7 +1493,7 @@ int cnc_probe(struct platform_device *pdev)
   dev_info(&pdev->dev, "%s: done", __func__);
   return 0;
 
-  sysfs_remove_link(&pdev->dev.kobj, CNC_GROUP_NAME);
+  sysfs_remove_link(glowforge_kobj, CNC_GROUP_NAME);
 failed_create_link:
   sysfs_remove_group(&pdev->dev.kobj, &cnc_attr_group);
 failed_create_group:
@@ -1535,14 +1535,16 @@ void cnc_remove(struct platform_device *pdev)
   stepper_power_off(self);
   io_release_gpios(self->gpios, NUM_GPIO_PINS);
   self->state_attr_node = NULL;
-  sysfs_remove_link(&pdev->dev.kobj, CNC_GROUP_NAME);
+  /* the link lives on the shared /sys/glowforge kobject, not the device's;
+   * removing it from the wrong kobject left a stale link that made every
+   * rebind fail with -EEXIST */
+  sysfs_remove_link(glowforge_kobj, CNC_GROUP_NAME);
   sysfs_remove_group(&pdev->dev.kobj, &cnc_attr_group);
   misc_deregister(&self->pulsedev);
   cnc_buffer_destroy(self);
   of_reserved_mem_device_release(self->dev);
   mutex_destroy(&self->lock);
   tasklet_kill(&self->fault_tasklet);
-  flush_scheduled_work();
   dev_info(&pdev->dev, "%s: done", __func__);
   return;
 }

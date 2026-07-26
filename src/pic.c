@@ -359,7 +359,7 @@ void pic_remove(struct spi_device *spi)
   dev_info(&spi->dev, "%s: started", __func__);
   pic_make_safe(spi);
   dms_notifier_chain_unregister(&dms_notifier_list, &self->dms_notifier);
-  sysfs_remove_link(&spi->dev.kobj, THERMAL_GROUP_NAME);
+  sysfs_remove_link(glowforge_kobj, PIC_GROUP_NAME);
   sysfs_remove_group(&spi->dev.kobj, &pic_attr_group);
   pic_unregister_leds(spi);
   mutex_destroy(&self->lock);

@@ -169,7 +169,7 @@ void head_remove(struct i2c_client *client)
   dev_info(&client->dev, "%s: started", __func__);
   head_make_safe(self);
   dms_notifier_chain_unregister(&dms_notifier_list, &self->dms_notifier);
-  sysfs_remove_link(&client->dev.kobj, HEAD_GROUP_NAME);
+  sysfs_remove_link(glowforge_kobj, HEAD_GROUP_NAME);
   sysfs_remove_group(&client->dev.kobj, &head_attr_group);
   mutex_destroy(&self->lock);
   dev_info(&client->dev, "%s: done", __func__);
