@@ -35,6 +35,7 @@ void io_release_gpios(int *gpios, size_t ngpios)
     int gpio = gpios[i];
     if (gpio >= 0) {
       gpio_free(gpio);
+      gpios[i] = -1; /* idempotent: double release must not double-free */
     }
   }
 }
@@ -133,6 +134,7 @@ void io_release_pwms(struct pwm_channel *pwm_channels, size_t npwms)
     if (likely(pwmdev)) {
       pwm_disable(pwmdev);
       pwm_put(pwmdev);
+      pwm_channels[i].pwmdev = NULL; /* idempotent: double release must not double-put */
     }
   }
 }

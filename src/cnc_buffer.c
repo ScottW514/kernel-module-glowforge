@@ -54,6 +54,10 @@ void cnc_buffer_destroy(struct cnc *self)
   if (self->pulsebuf_virt && self->pulsebuf_phys && self->pulsebuf_size) {
     dma_free_coherent(self->dev, self->pulsebuf_size, self->pulsebuf_virt, self->pulsebuf_phys);
   }
+  /* idempotent: probe-error unwind and remove may both get here */
+  self->pulsebuf_virt = NULL;
+  self->pulsebuf_phys = 0;
+  self->pulsebuf_size = 0;
 }
 
 

@@ -1352,14 +1352,14 @@ int cnc_probe(struct platform_device *pdev)
 
   /* Set up timer */
   epit_np = of_parse_phandle(pdev->dev.of_node, "timer", 0);
-  if (IS_ERR(epit_np)) {
-    dev_err(&pdev->dev, "no timer specified");
-    ret = -ENODEV;
+  if (!epit_np) { /* of_parse_phandle() returns NULL on failure, not ERR_PTR */
+    ret = dev_err_probe(&pdev->dev, -ENODEV, "no timer specified");
     goto failed_epit_init;
   }
   self->epit = epit_get(epit_np);
   of_node_put(epit_np);
   if (!self->epit) {
+    ret = dev_err_probe(&pdev->dev, -ENODEV, "failed to get EPIT timer");
     goto failed_epit_init;
   }
   ret = epit_init_freerunning(self->epit, NULL, NULL);
@@ -1373,16 +1373,19 @@ int cnc_probe(struct platform_device *pdev)
     self->sdma_ch_num = sdma_params[0];
     self->sdma_script_origin = sdma_params[1];
   } else {
-    dev_err(&pdev->dev, "sdma-params property not specified");
+    ret = dev_err_probe(&pdev->dev, -ENODEV, "sdma-params property not specified");
     goto failed_sdma_init;
   }
   /* Set up SDMA and get a channel reference */
   self->sdma = sdma_engine_get();
   if (!self->sdma) {
+    ret = dev_err_probe(&pdev->dev, -ENODEV, "failed to get SDMA engine");
     goto failed_sdma_init;
   }
   self->sdmac = sdma_get_channel(self->sdma, self->sdma_ch_num);
   if (!self->sdmac) {
+    ret = dev_err_probe(&pdev->dev, -ENODEV, "failed to get SDMA channel %d",
+      self->sdma_ch_num);
     goto failed_sdma_init;
   }
 
@@ -1406,10 +1409,12 @@ int cnc_probe(struct platform_device *pdev)
     goto failed_pulsedev_register;
   }
 
-  /* Acquire the 40V supply */
+  /* Acquire the 40V supply (the DT cnc node must carry 40v-supply).
+   * PTR_ERR propagation matters: -EPROBE_DEFER must reach the driver core. */
   self->supply_40v = devm_regulator_get_exclusive(&pdev->dev, "40v");
   if (IS_ERR(self->supply_40v)) {
-    dev_err(&pdev->dev, "failed to get 40V regulator");
+    ret = dev_err_probe(&pdev->dev, PTR_ERR(self->supply_40v),
+      "failed to get 40V regulator");
     goto failed_regulator_get;
   }
 
@@ -1427,7 +1432,7 @@ int cnc_probe(struct platform_device *pdev)
   }
   self->state_attr_node = sysfs_get_dirent(pdev->dev.kobj.sd, STR(ATTR_STATE));
   if (!self->state_attr_node) {
-    dev_err(&pdev->dev, "could not get node for state attribute");
+    ret = dev_err_probe(&pdev->dev, -ENODEV, "could not get node for state attribute");
     goto failed_create_link;
   }
 
@@ -1482,6 +1487,7 @@ void cnc_remove(struct platform_device *pdev)
 {
   struct cnc *self = platform_get_drvdata(pdev);
   if (!cnc_enabled) { return; }
+  if (!self) { return; } /* probe never set drvdata (failed early) */
   dev_info(&pdev->dev, "%s: started", __func__);
   epit_stop(self->epit);
   sdma_set_channel_interrupt_callback(self->sdmac, NULL, NULL);
