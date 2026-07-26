@@ -134,6 +134,10 @@ Read, ASCII, 0-7
 Indicates any faults that have been set by the stepper drivers.
 Bits: 0: X Axis, 1: Y1 Axis, 2: Y2 Axis  
 
+##### free
+Read, ASCII, bytes  
+Free space in the pulse ring (already net of the reserved 32 KiB backtrack gap): the largest write that will currently succeed. Each read performs SDMA channel-0 transactions - do not poll it for pacing (see the feeder contract under ```/dev/glowforge```).
+
 ##### halt
 Write, ASCII, 1  
 Writing "1" performs an immediate stop of a running program: pulse-data processing ends at once with no deceleration, and the device switches to the "idle" state.  
@@ -159,6 +163,10 @@ State of the interlock latch-reset line (a driven output, initialised low, read 
 ##### laser_enable
 Read, ASCII, 0-1  
 State of the laser-enable (FIRE) drive line.  
+
+##### laser_latch
+Write, ASCII, 0-1  
+Laser lockout latch. 1 = LOCK: the LASER_ON drive line is put in high impedance (the SDMA stream cannot enable the laser). 0 = UNLOCK: the line is restored as a driven output under SDMA control. Lock it whenever no print is in progress; the driver locks it automatically when /dev/glowforge is closed.
 
 ##### laser_on
 Read, ASCII, 0-1  
@@ -246,28 +254,30 @@ Read, ASCII, count
 Number of streaming underruns (see ```streaming```) since the module was loaded.
 
 ##### x_decay
-Read/Write, ASCII, 0-1  
+Read/Write, ASCII, 0-2  
 Sets the current decay mode for the X axis.  
 0: Slow - fast stop, slow response  
-1: Fast - fast response, slow stop  
+1: Mixed (decay pin Hi-Z)  
+2: Fast - fast response, slow stop  
 
 ##### x_mode
 Read/Write, ASCII, [1, 2, 4, 8, 16, 32]  
 Microstepping mode for X Axis.  1 = Full steps  
 
 ##### y_decay
-Read/Write, ASCII, 0-1  
+Read/Write, ASCII, 0-2  
 Sets the current decay mode for the Y axis.  
 0: Slow - fast stop, slow response  
-1: Fast - fast response, slow stop  
+1: Mixed (decay pin Hi-Z)  
+2: Fast - fast response, slow stop  
 
 ##### y_mode
 Read/Write, ASCII, [1, 2, 4, 8, 16, 32]  
 Microstepping mode for Y Axis.  1 = Full steps  
 
-##### z_mode
+##### z_step
 Write, ASCII, 0-1  
-Moves Z-Axis one step in requested direction.
+Moves Z-Axis one step in requested direction (direct GPIO pulse, not via the pulse stream).  
 0: Negative, towards bed  
 1: Positive, away from bed  
 
@@ -466,12 +476,79 @@ Turns on/off the water pump. 0: off, 1: on
 
 ---
 #### /dev/glowforge
-Write/Seek/Lock, Binary, 128MB max  
-Interface to the program buffer.  Programs are one byte per step period or laser power setting. Programs are written directly to buffer.  
+Write/Seek/Lock, Binary, 128MB ring  
+Interface to the pulse-stream ring buffer. Exclusive-open: a second open fails with EBUSY, so one process holds one fd and routes every write and seek through it.  
 Seeking to 0 will clear program data, byte counters, and position counters.  
 Seeking to 1 will clear program data and byte counters.  
 Seeking to 2 will clear position counters.  
-Locking the file will set the "deadman switch". If the file is closed while the deadman switch is active, the device will perform and emergency stop.  
+Locking the file (flock LOCK_EX) arms the "dead man's switch": if the fd is closed while locked and a program is running, the device performs an emergency stop.  
+
+##### Pulse-stream feeder contract
+Everything a streaming feeder (e.g. a grblHAL step backend) must obey. All of
+this is enforced by the SDMA script and driver, not negotiable at run time.
+
+**Byte layout.** One byte per EPIT tick. If bit 7 is clear, the byte is a
+step/laser command; if bit 7 is set, the low 7 bits are a laser power level:
+
+    bit 0  X_STEP        bit 4  LASER (fire during this tick)
+    bit 1  X_DIR         bit 5  Z_STEP
+    bit 2  Y_STEP        bit 6  Z_DIR
+    bit 3  Y_DIR         bit 7  0 = step byte, 1 = power byte (bits 0-6 = power)
+
+X/Y convention: DIR bit set = negative direction for X, positive for Y
+(Y1/Y2 are driven complementary). Z convention: TO BE CONFIRMED ON HARDWARE
+(the script counts Z_DIR=1 as +Z in the position counter; verify physical
+lens direction before trusting Z streams - audit N3).
+
+**Fixed byte density - no per-byte timing.** The engine consumes exactly one
+byte per timer tick at ```step_freq```. All velocity is expressed as step
+DENSITY across bytes (software DDS/Bresenham resampling of variable-rate
+segments into a fixed-tick stream). ```step_freq``` is immutable while
+RUNNING (-EBUSY); mid-run speed change is density, not clock.
+
+**Effective rate ceiling.** The script's per-byte execution time is ~6 us:
+above ~165 kHz the EPIT outruns the script and the effective consumption
+rate saturates (measured on hardware: 164.6 kHz sustained at
+step_freq=200000). Plan machine ticks at or below 100 kHz; 20-50 kHz covers
+realistic kinematics with big margin.
+
+**Power bytes.** A power byte sets the laser PWM duty (7-bit, written raw
+into PWMSAR; full range at the ~40 kHz carrier). Two rules:
+- **Consecutive power bytes are DROPPED**: only the first of a run of
+  power bytes applies; the rest are consumed without effect (one power
+  change per non-power byte). Interleave a step byte between power changes.
+- **Every run started without preserve_power (the plain ```run``` attr)
+  resets duty to ~100%.** A stream MUST send its first power byte before its
+  first laser-on byte, or the first pulses fire at full power.
+
+**Termination.** End every stream with laser-off bytes (bit 4 clear). The
+script forces laser and step lines low at end-of-data as a hardware backstop,
+but the stream must not RELY on it: it is the underrun safety net.
+
+**Streaming protocol.** Write ```streaming=1``` before a live-fed run; then
+end-of-data mid-run lands in the ```underrun``` state (position no longer
+trusted; re-home) instead of "idle", and new runs are refused until
+acknowledged via ```stop```. Write ```streaming=0``` after enqueueing the
+final bytes of a job so its terminal end-of-data counts as completion.
+
+**Pacing and backpressure.** Writes either commit fully or fail -ENOMEM
+(no partials; 32 KiB of ring is reserved as a backtrack gap). Do not poll
+```free``` for pacing - every read costs two channel-0 SDMA transactions;
+pace by wall clock (enqueued_target = elapsed * step_freq + queue_depth) and
+treat -ENOMEM as "back off". Keep the queue depth BOUNDED (50-200 ms) so
+feed/power overrides take effect promptly; the 128 MiB ring makes deep
+queueing safe but sluggish. Measured reference (i.MX6 Solo, PREEMPT,
+SCHED_FIFO feeder, full CPU+IO load): 150 ms depth at 100 kHz ran 2 minutes
+with 0.2 ms worst write latency and zero underruns.
+
+**Do not write while running backward** (backtrack): the write path would
+clobber the backtrack dead-stop; such writes are rejected with -EBUSY.
+
+**Recommended feeder shape.** Hold the fd open + flock'd for the whole job
+(deadman armed); prefill one queue depth; ```run```; top up on a 10-20 ms
+cadence by wall clock; on ```underrun``` raise a controller alarm, re-home,
+ack via ```stop```, seek-clear, regenerate. For feed-hold / jog-cancel use
+```stop``` (controlled decel) or ```halt``` + seek-clear + regenerate.
 
 ---
 #### /sys/class/leds/button_led_X, /sys/class/leds/lid_led_X
