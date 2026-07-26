@@ -337,7 +337,8 @@ __maybe_unused static int stepper_power_on(struct cnc *self)
 }
 
 
-static void stepper_power_off(struct cnc *self)
+/* Disables the 40V supply only. May sleep; never call under status_lock. */
+static void stepper_supply_off(struct cnc *self)
 {
   if (regulator_is_enabled(self->supply_40v)) {
     if (regulator_disable(self->supply_40v)) {
@@ -346,6 +347,13 @@ static void stepper_power_off(struct cnc *self)
       dev_info(self->dev, "40V off");
     }
   }
+}
+
+
+/* May sleep; never call under status_lock. */
+static void stepper_power_off(struct cnc *self)
+{
+  stepper_supply_off(self);
   io_change_pins(self->gpios, NUM_GPIO_PINS, cnc_shutdown_pin_changes);
 }
 
@@ -355,13 +363,29 @@ static void _driver_stop(struct cnc *self, enum cnc_state next_state)
 {
   dev_dbg(self->dev, "stopping cut...");
   epit_stop(self->epit);
-  hrtimer_cancel(&self->charge_pump_timer);
+  /* Stop the HV-watchdog feed. From softirq (SDMA callback, ramp timer)
+   * skip the synchronous cancel: the callback self-terminates as soon as it
+   * sees the state leave RUNNING, costing at most one extra ~200 ms feed
+   * with all output lines already forced low. */
+  if (!in_softirq()) {
+    hrtimer_cancel(&self->charge_pump_timer);
+  }
   sdma_event_disable(self->sdmac, epit_sdma_event(self->epit));
   _cnc_ramp_stop(self);
 
-  /* If the next state is DISABLED, shut down the stepper drivers. */
+  /* Clear run-scoped flags so nothing stale leaks into the next run. */
+  self->status.waypoint_armed = false;
+  self->status.decel_on_interrupt = false;
+  self->status.enable_laser_on_interrupt = false;
+  self->status.running_backward = false;
+
+  /* Drive the outputs to their safe state. The 40 V supply itself is NOT
+   * touched here: regulator calls may sleep, and _driver_stop runs under
+   * status_lock and from atomic contexts (SDMA tasklet, fault tasklet,
+   * panic notifier). Callers that disable (cnc_disable, deadman close)
+   * power the supply off after releasing the lock. */
   if (next_state == STATE_DISABLED) {
-    stepper_power_off(self);
+    io_change_pins(self->gpios, NUM_GPIO_PINS, cnc_shutdown_pin_changes);
   }
   /* Otherwise, just ensure the laser and stepper lines are low */
   else {
@@ -486,28 +510,51 @@ static enum hrtimer_restart ramp_update_tasklet_fn(struct hrtimer *timer)
  * Called when the SDMA script raises the host interrupt flag for our channel
  * (via a "notify 3" instruction, at a waypoint or at end-of-data).
  * This callback executes in tasklet context.
+ *
+ * Signal decoding uses only host-side state (never a channel context fetch,
+ * which may sleep): if a waypoint is outstanding, the signal is the waypoint;
+ * otherwise it is end-of-data. Two notifies raised before the ARM services
+ * the first merge into ONE callback, so a coalesced waypoint+end-of-data
+ * signal is decoded as just the waypoint here — the script re-raises the
+ * end-of-data interrupt every ~255 parked iterations until we stop the EPIT,
+ * so the lost half is redelivered shortly.
  */
 void cnc_sdma_interrupt(void *param)
 {
-  /* The "on_interrupt" flags modify the behavior of this IRQ handler. */
   struct cnc *self = (struct cnc *)param;
   spin_lock_bh(&self->status_lock);
-  /* "enable_laser_on_interrupt" is set when we're expecting an SDMA waypoint */
-  /* interrupt during a resume. */
-  if (unlikely(self->status.enable_laser_on_interrupt)) {
-    self->status.enable_laser_on_interrupt = false;
-    gpio_direction_output(self->gpios[PIN_LASER_ON], 0);
+  if (unlikely(self->status.waypoint_armed)) {
+    /* Waypoint reached (scratch7 hit zero). Consume the armed actions. */
+    self->status.waypoint_armed = false;
+    if (self->status.enable_laser_on_interrupt) {
+      /* Re-enable SDMA control of the laser line (end of a resume ramp). */
+      self->status.enable_laser_on_interrupt = false;
+      gpio_direction_output(self->gpios[PIN_LASER_ON], 0);
+    }
+    if (self->status.decel_on_interrupt) {
+      /* Start the controlled deceleration (end of a backtrack). */
+      self->status.decel_on_interrupt = false;
+      _cnc_decel_start(self);
+    }
   }
-  /* "decel_on_interrupt" is set when we're expecting an SDMA waypoint */
-  /* interrupt during a backtrack. */
-  else if (unlikely(self->status.decel_on_interrupt)) {
-    self->status.decel_on_interrupt = false;
-    _cnc_decel_start(self);
+  else if (self->status.state == STATE_RUNNING) {
+    /* End of data: normal completion — or an underrun, if a streaming
+     * feeder declared itself. The stop is laser-safe either way (the script
+     * forces the laser/step lines low at end-of-data before signaling);
+     * an underrun additionally means steps may have been skipped at speed,
+     * so the position counters can no longer be trusted. */
+    if (unlikely(self->status.streaming)) {
+      self->underrun_count++;
+      dev_warn(self->dev, "pulse data underrun (#%u); position no longer trusted",
+        self->underrun_count);
+      _driver_stop(self, STATE_UNDERRUN);
+    } else {
+      _driver_stop(self, STATE_IDLE);
+    }
   }
-  /* Neither flag set; SDMA has reached the end of the data, stop the driver. */
-  else {
-    _driver_stop(self, STATE_IDLE);
-  }
+  /* else: a stale re-notify delivered after we already stopped (end-of-data
+   * plus a queued re-notify, or a fault/halt stopped us first). Ignore it
+   * rather than clobbering the current state. */
   spin_unlock_bh(&self->status_lock);
 }
 
@@ -563,6 +610,7 @@ static int cnc_run_with_options(struct cnc *self, struct cnc_run_options opts)
   if (need_to_start) {
     uint32_t regs[3];
     uint32_t num_steps = opts.num_steps;
+    bool was_powered;
 
     /* Ensure there is enough data enqueued. (may sleep) */
     if (cnc_buffer_is_empty(self)) {
@@ -610,6 +658,18 @@ static int cnc_run_with_options(struct cnc *self, struct cnc_run_options opts)
       return ret;
     }
 
+    /* Power the steppers and reset the laser PWM duty BEFORE taking the
+     * status lock: regulator and PWM operations may sleep (regulator rdev
+     * mutex; pwm_apply_might_sleep() on pwm-imx27), so they must never run
+     * under spin_lock_bh. The fault check below still gates the actual run
+     * start; if a fault raced in, we compensate by powering back off —
+     * but only if the steppers were off when we entered. */
+    was_powered = (regulator_is_enabled(self->supply_40v) > 0);
+    stepper_power_on_unchecked(self);
+    if (!opts.preserve_power) {
+      io_pwm_set_duty_cycle(&self->laser_pwm, LASER_PWM_IDLE_DUTY);
+    }
+
     /* We could have transitioned to FAULT between the start of the function */
     /* and now, so we have to lock and check the fault state. */
     /* If a fault occurs during the execution of this block, we'll get a */
@@ -617,13 +677,19 @@ static int cnc_run_with_options(struct cnc *self, struct cnc_run_options opts)
     /* the driver to the FAULT state. */
     spin_lock_bh(&self->status_lock);
     if (self->status.triggered_faults) {
-      dev_err(self->dev, "attempt to start in fault state");
       ret = -EPERM;
     } else {
-      bool enable_laser_on_interrupt = (opts.accelerate && !opts.backward);
+      /* The waypoint action flags are only meaningful when a waypoint is
+       * actually armed (num_steps > 0): scratch7 == 0 never fires, and a
+       * stale action flag would eat the end-of-data signal (resume(0)
+       * previously wedged the driver in RUNNING exactly this way). */
+      bool waypoint_armed = (num_steps > 0);
       self->status.state = STATE_RUNNING;
-      self->status.decel_on_interrupt = opts.decelerate;
-      self->status.enable_laser_on_interrupt = enable_laser_on_interrupt;
+      self->status.waypoint_armed = waypoint_armed;
+      self->status.decel_on_interrupt = opts.decelerate && waypoint_armed;
+      self->status.enable_laser_on_interrupt =
+        (opts.accelerate && !opts.backward && waypoint_armed);
+      self->status.running_backward = opts.backward;
 
       /* clear all fault conditions */
       self->status.triggered_faults &= fatal_fault_conditions;
@@ -631,15 +697,9 @@ static int cnc_run_with_options(struct cnc *self, struct cnc_run_options opts)
       cnc_notify_state_changed(self);
 
       dev_dbg(self->dev, "starting cut...");
-      /* Ensure the steppers are powered up */
-      stepper_power_on_unchecked(self);
-      if (!opts.preserve_power) {
-        io_pwm_set_duty_cycle(&self->laser_pwm, LASER_PWM_IDLE_DUTY);
-      }
-
       beam_detect_latch_reset(self);
       toggle_charge_pump(self); /* pulse once to prime charge pump before cut start */
-      hrtimer_start(&self->charge_pump_timer, charge_pump_interval_ktime, HRTIMER_MODE_REL);
+      hrtimer_start(&self->charge_pump_timer, charge_pump_interval_ktime, HRTIMER_MODE_REL_SOFT);
       /* Enable timer events */
       sdma_event_enable(self->sdmac, epit_sdma_event(self->epit));
 
@@ -657,6 +717,13 @@ static int cnc_run_with_options(struct cnc *self, struct cnc_run_options opts)
       dev_dbg(self->dev, "started.");
     }
     spin_unlock_bh(&self->status_lock);
+
+    if (ret == -EPERM) {
+      dev_err(self->dev, "attempt to start in fault state");
+      if (!was_powered) {
+        stepper_power_off(self); /* undo the speculative power-on */
+      }
+    }
   }
 
   return ret;
@@ -712,6 +779,7 @@ int cnc_resume(struct cnc *self, uint32_t laser_delay_steps)
  * Idle: do nothing
  * Running: stop cut (controlled deceleration)
  * Disabled: do nothing (remain in disabled state)
+ * Underrun: acknowledge; return to idle (feeder must re-home before trusting position)
  * Fault: do nothing (return error)
  */
 int cnc_stop(struct cnc *self)
@@ -722,6 +790,13 @@ int cnc_stop(struct cnc *self)
   switch (self->status.state) {
     case STATE_IDLE:
     case STATE_DISABLED:
+      break;
+
+    case STATE_UNDERRUN:
+      /* Acknowledge the underrun. The feeder is expected to have raised its
+       * alarm; position must be re-homed before it can be trusted again. */
+      self->status.state = STATE_IDLE;
+      cnc_notify_state_changed(self);
       break;
 
     case STATE_FAULT:
@@ -775,17 +850,21 @@ int cnc_halt(struct cnc *self)
 /**
  * Idle: power off steppers
  * Running: stop everything and power off steppers
+ * Underrun: stop everything and power off steppers
  * Disabled: do nothing
  * Fault: do nothing
  */
 int cnc_disable(struct cnc *self)
 {
   int ret = 0;
+  bool powered_down = false;
   spin_lock_bh(&self->status_lock);
   switch (self->status.state) {
     case STATE_IDLE:
     case STATE_RUNNING:
+    case STATE_UNDERRUN:
       _driver_stop(self, STATE_DISABLED);
+      powered_down = true;
       break;
     case STATE_DISABLED:
     case STATE_FAULT:
@@ -795,6 +874,11 @@ int cnc_disable(struct cnc *self)
       break;
   }
   spin_unlock_bh(&self->status_lock);
+  if (powered_down) {
+    /* Regulator ops may sleep: outside the lock. The output lines are
+     * already in their shutdown state from _driver_stop. */
+    stepper_supply_off(self);
+  }
   return ret;
 }
 
@@ -808,14 +892,15 @@ int cnc_disable(struct cnc *self)
 int cnc_enable(struct cnc *self)
 {
   int ret = 0;
+  bool need_power_on = false;
   spin_lock_bh(&self->status_lock);
   switch (self->status.state) {
     case STATE_DISABLED:
-      if (_stepper_power_on(self, self->status.triggered_faults) == 0) {
-        self->status.state = STATE_IDLE;
-        cnc_notify_state_changed(self);
-      } else {
+      if (self->status.triggered_faults & fatal_fault_conditions) {
+        dev_err(self->dev, "driver(s) in fault state; not powering on");
         ret = -EPERM;
+      } else {
+        need_power_on = true;
       }
       break;
     case STATE_IDLE:
@@ -825,6 +910,26 @@ int cnc_enable(struct cnc *self)
       break;
   }
   spin_unlock_bh(&self->status_lock);
+
+  if (!need_power_on) {
+    return ret;
+  }
+
+  /* Regulator ops may sleep: power on outside the lock, then re-check that
+   * no fault raced in before committing the state change. */
+  stepper_power_on_unchecked(self);
+  spin_lock_bh(&self->status_lock);
+  if (self->status.triggered_faults & fatal_fault_conditions) {
+    ret = -EPERM;
+  } else if (self->status.state == STATE_DISABLED) {
+    self->status.state = STATE_IDLE;
+    cnc_notify_state_changed(self);
+  }
+  spin_unlock_bh(&self->status_lock);
+  if (ret) {
+    dev_err(self->dev, "fault during power-on; disabling again");
+    stepper_power_off(self);
+  }
   return ret;
 }
 
@@ -926,10 +1031,18 @@ static void toggle_charge_pump(struct cnc *self)
 }
 
 
-/* Called from hard interrupt context */
+/* Called in softirq context (soft hrtimer, same domain as the stop logic:
+ * if softirqs are starved, this feed starves with them and the hardware
+ * HV watchdog disarms the chain instead of being kept alive blind). */
 static enum hrtimer_restart charge_pump_timer_cb(struct hrtimer *timer)
 {
   struct cnc *self = container_of(timer, struct cnc, charge_pump_timer);
+  /* Feed the HV watchdog only while a cut is genuinely in progress; if the
+   * driver left RUNNING (stop, fault, underrun), let the feed die even when
+   * the synchronous cancel in _driver_stop was skipped. */
+  if (self->status.state != STATE_RUNNING) {
+    return HRTIMER_NORESTART;
+  }
   toggle_charge_pump(self);
   hrtimer_forward_now(timer, charge_pump_interval_ktime);
   return HRTIMER_RESTART;
@@ -1324,6 +1437,9 @@ int cnc_probe(struct platform_device *pdev)
   struct device_node *epit_np = NULL;
   u32 sdma_params[2];
   int ret = 0;
+  /* Contract guard: the header's mirrored SDMA context layout must match the
+   * size the imx-sdma driver asserts against the same constant. */
+  BUILD_BUG_ON(sizeof(struct sdma_context_data) != SDMA_CONTEXT_DATA_EXPECTED_SIZE);
   if (!cnc_enabled) { dev_info(&pdev->dev, "%s: disabled, skipping", __func__); return 0; }
   dev_info(&pdev->dev, "%s: started", __func__);
 
@@ -1341,7 +1457,7 @@ int cnc_probe(struct platform_device *pdev)
   cnc_set_ramp_rate_hz_per_s(self, RAMP_RATE_DEFAULT_HZ_PER_S);
   hrtimer_init(&self->ramp_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL_SOFT);
   self->ramp_timer.function = ramp_update_tasklet_fn;
-  hrtimer_init(&self->charge_pump_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+  hrtimer_init(&self->charge_pump_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL_SOFT);
   self->charge_pump_timer.function = charge_pump_timer_cb;
   hrtimer_init(&self->laser_sample_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL_SOFT);
   self->laser_sample_timer.function = laser_sample_timer_cb;

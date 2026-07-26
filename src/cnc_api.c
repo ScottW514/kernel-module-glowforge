@@ -225,6 +225,39 @@ static ssize_t sdma_context_show(struct device *dev, struct device_attribute *at
 }
 
 
+/* Streaming mode: a live feeder sets this to 1 to declare that running out
+ * of pulse data mid-run is an UNDERRUN (fault-like STATE_UNDERRUN, position
+ * no longer trusted) rather than normal end-of-program. Set it back to 0
+ * after enqueueing the final bytes of a job so the terminal end-of-data is
+ * treated as completion. */
+static ssize_t streaming_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+  struct cnc *self = dev_get_drvdata(dev);
+  return scnprintf(buf, PAGE_SIZE, "%d\n", self->status.streaming ? 1 : 0);
+}
+
+
+static ssize_t streaming_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
+{
+  struct cnc *self = dev_get_drvdata(dev);
+  char ch;
+  if (count < 1) { return -EINVAL; }
+  ch = *buf;
+  if (ch != '0' && ch != '1') { return -EINVAL; }
+  spin_lock_bh(&self->status_lock);
+  self->status.streaming = (ch == '1');
+  spin_unlock_bh(&self->status_lock);
+  return count;
+}
+
+
+static ssize_t underruns_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+  struct cnc *self = dev_get_drvdata(dev);
+  return scnprintf(buf, PAGE_SIZE, "%u\n", self->underrun_count);
+}
+
+
 void cnc_notify_state_changed(struct cnc *self)
 {
   /* safe to call from atomic context */
@@ -323,6 +356,8 @@ DEFINE_DEVICE_ATTR(ATTR_POSITION, S_IRUSR, position_show, NULL);
 DEFINE_DEVICE_ATTR(ATTR_FREE, S_IRUSR, free_show, NULL);
 DEFINE_DEVICE_ATTR(ATTR_SDMA_CONTEXT, S_IRUSR, sdma_context_show, NULL);
 DEFINE_DEVICE_ATTR(ATTR_MOTOR_LOCK, S_IRUSR|S_IWUSR, motor_lock_show, motor_lock_store);
+DEFINE_DEVICE_ATTR(ATTR_STREAMING, S_IRUSR|S_IWUSR, streaming_show, streaming_store);
+DEFINE_DEVICE_ATTR(ATTR_UNDERRUNS, S_IRUSR, underruns_show, NULL);
 DEFINE_MODE_ATTR(ATTR_X_MODE, AXIS_X);
 DEFINE_MODE_ATTR(ATTR_Y_MODE, AXIS_Y);
 DEFINE_DECAY_ATTR(ATTR_X_DECAY, AXIS_X);
@@ -353,6 +388,8 @@ static struct attribute *cnc_attrs[] = {
   DEV_ATTR_PTR(ATTR_LASER_LATCH),
   DEV_ATTR_PTR(ATTR_POSITION),
   DEV_ATTR_PTR(ATTR_FREE),
+  DEV_ATTR_PTR(ATTR_STREAMING),
+  DEV_ATTR_PTR(ATTR_UNDERRUNS),
   DEV_ATTR_PTR(ATTR_SDMA_CONTEXT),
   DEV_ATTR_PTR(ATTR_X_MODE),
   DEV_ATTR_PTR(ATTR_Y_MODE),

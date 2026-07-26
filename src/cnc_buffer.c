@@ -82,9 +82,23 @@ static int cnc_buffer_sync_head(struct cnc *self)
 ssize_t cnc_buffer_add_user_data(struct cnc *self, const uint8_t __user *data, size_t count)
 {
   unsigned int copied;
+  int ret;
+
+  /* Reject writes while running backward: the tail publish below rewrites
+   * scratch5, which a backward run repurposes as the oldest-valid-data dead
+   * stop — clobbering it would let the engine replay up to the whole ring
+   * of stale data backward. (The feeder must also not have a write in
+   * flight when it requests a backtrack; that ordering is the feeder's
+   * responsibility, since run-start SDMA writes happen outside this lock.) */
+  spin_lock_bh(&self->status_lock);
+  if (self->status.state == STATE_RUNNING && self->status.running_backward) {
+    spin_unlock_bh(&self->status_lock);
+    return -EBUSY;
+  }
+  spin_unlock_bh(&self->status_lock);
 
   /* read current head value from SDMA */
-  int ret = cnc_buffer_sync_head(self);
+  ret = cnc_buffer_sync_head(self);
   if (ret) { return ret; }
 
   /* bail if there's not enough room */
@@ -95,8 +109,13 @@ ssize_t cnc_buffer_add_user_data(struct cnc *self, const uint8_t __user *data, s
   /* copy userspace data into fifo; */
   /* entire buffer must fit, don't allow partial copies */
   ret = kfifo_from_user(&self->pulsebuf_fifo, data, count, &copied);
-  if (ret) { return ret; }
-  if (copied != count) { return -ENOMEM; }
+  if (ret || copied != count) {
+    /* Roll back partially-committed bytes so kfifo.in never diverges from
+     * what the SDMA engine will be told about (scratch5 is only published
+     * on full success). */
+    self->pulsebuf_fifo.kfifo.in -= copied;
+    return ret ? ret : -ENOMEM;
+  }
 
   self->pulsebuf_total_bytes += count;
   /* inform SDMA of the new tail index; just change one register */

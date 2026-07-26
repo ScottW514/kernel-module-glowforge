@@ -73,6 +73,8 @@
 #define ATTR_MOTOR_LOCK           motor_lock
 #define ATTR_POSITION             position
 #define ATTR_FREE                 free
+#define ATTR_STREAMING            streaming
+#define ATTR_UNDERRUNS            underruns
 #define ATTR_SDMA_CONTEXT         sdma_context
 #define ATTR_X_MODE               x_mode
 #define ATTR_X_DECAY              x_decay
@@ -230,7 +232,11 @@
   X(STATE_IDLE, "idle")         /** Steppers are on but no cut is in progress */ \
   X(STATE_RUNNING, "running")   /** A cut is in progress */ \
   X(STATE_DISABLED, "disabled") /** Steppers were explicitly disabled (for debugging) */ \
-  X(STATE_FAULT, "fault")     /** Stepper driver fault */
+  X(STATE_FAULT, "fault")     /** Stepper driver fault */ \
+  X(STATE_UNDERRUN, "underrun") /** Streaming feeder let the pulse buffer run dry mid-run; \
+                                    position may be desynced (steps skipped at speed). \
+                                    Only entered when the "streaming" attr is 1. \
+                                    Acknowledge by writing "1" to the stop attr. */
 #undef X
 #define X(e,s) e,
 enum cnc_state {

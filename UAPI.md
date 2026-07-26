@@ -220,6 +220,7 @@ The current CNC state:
 "running": A program is in progress  
 "disabled": Steppers are disabled, no program in progress  
 "fault": Stepper driver fault  
+"underrun": A streaming feeder (see ```streaming```) let the pulse buffer run dry mid-run. The stop is instantaneous (no deceleration), so steps may have been skipped at speed and the reported position can no longer be trusted. New runs are refused until the underrun is acknowledged by writing "1" to ```stop```; the feeder should treat this as an alarm and re-home before continuing.  
 
 ##### step_freq
 Read/Write, ASCII, 1000-200000  
@@ -231,7 +232,18 @@ Writing "1" performs a controlled stop of a running program: the step frequency 
 Because the deceleration is controlled, no steps are lost, so the reported position stays accurate.  
 Once stopped, the laser-enable line is released (laser off) and the step lines are driven low; the stepper motors remain powered.  
 For an immediate stop with no deceleration (at the cost of possibly losing steps), see ```halt```.  
-Has no effect unless the device is in the "running" state.
+In the "underrun" state, writing "1" acknowledges the underrun and returns the device to "idle" (position should be re-homed before it is trusted).  
+Otherwise has no effect unless the device is in the "running" state.
+
+##### streaming
+Read/Write, ASCII, 0-1  
+Declares how end-of-data is interpreted. A live feeder (one that streams pulse data while the program runs, rather than preloading it) writes "1" before starting a run: running out of data mid-run then transitions the device to the "underrun" state instead of "idle", making buffer starvation distinguishable from normal completion. Write "0" after enqueueing the final bytes of a job so the terminal end-of-data counts as completion.  
+Default is 0 (factory/preload behavior: any end-of-data is a normal stop).  
+At end-of-data the SDMA script itself forces the laser and step lines low before signaling the host, regardless of this setting.
+
+##### underruns
+Read, ASCII, count  
+Number of streaming underruns (see ```streaming```) since the module was loaded.
 
 ##### x_decay
 Read/Write, ASCII, 0-1  

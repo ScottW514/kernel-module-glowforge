@@ -353,9 +353,12 @@ struct cnc_status {
   int triggered_faults:8;
   int decelerating:1; /* 1 if currently decelerating */
   int accelerating:1; /* 1 if currently accelerating */
-  int decel_on_interrupt:1; /* if 1, start decel on SDMA interrupt */
-  int enable_laser_on_interrupt:1; /* if 1, enable laser on SDMA interrupt */
-  int reserved:12;
+  int decel_on_interrupt:1; /* if 1, start decel on SDMA waypoint interrupt */
+  int enable_laser_on_interrupt:1; /* if 1, enable laser on SDMA waypoint interrupt */
+  int waypoint_armed:1; /* if 1, a waypoint interrupt (scratch7) is outstanding */
+  int running_backward:1; /* if 1, the current run consumes the ring backward */
+  int streaming:1; /* if 1, a feeder declared live streaming: end-of-data is an underrun */
+  int reserved:9;
 } __attribute__((packed));
 
 
@@ -400,6 +403,8 @@ struct cnc {
   struct sdma_channel *sdmac;
   /** The current state of the driver. */
   volatile struct cnc_status status;
+  /** Number of streaming underruns since module load (see status.streaming). */
+  uint32_t underrun_count;
   /**
    * Spinlock used to protect the state variable, which is shared between main
    * code (in kernel context) and the sdma channel and hrtimer callbacks (in
