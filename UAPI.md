@@ -403,7 +403,11 @@ This is not intended to be set directly.  Instead, it should be set using the ``
 ##### pwr_temp
 Read, ASCII, 0-1023  
 Power Supply temperature.  
-Best guess formula for degrees C: ```(value * 0.08715) - 21```  
+Best guess formula for degrees C: ```(value * 0.08715) - 21``` &mdash;
+**still unverified.** The factory firmware instantiates the beta-equation
+thermistor conversion (see the coolant section) only for the two water
+sensors, so this sensor uses a different path; note the guess has a
+*positive* slope, unlike the coolant NTCs.
 
 ##### raw
 Read/Write, Binary, Varies  
@@ -415,17 +419,52 @@ Read from this file to obtain the binary data transmitted by the PIC during the 
 ##### tec_temp
 Read, ASCII, 0-1023  
 Thermal Electric Cooler temperature.  
-Formula for conversion to temperature is yet to be determined.  
+Formula for conversion to temperature is yet to be determined (it does
+**not** use the coolant beta conversion - only the two water sensors do).
+Observed reading 1023 (rail) on at least one unit, i.e. likely
+unpopulated or an open sensor on some machines.
 
 ##### water_temp_1
 Read, ASCII, 0-1023  
-Water temperature, downstream of heater.  
-Best guess formula for degrees C: ```(value * -0.09653) + 94```  
+Water temperature, downstream of heater. See the conversion below.  
 
 ##### water_temp_2
 Read, ASCII, 0-1023  
-Water temperature, upstream of heater.  
-Best guess formula for degrees C: ```(value * -0.09653) + 94```  
+Water temperature, upstream of heater. See the conversion below.  
+
+##### Coolant temperature conversion (factory formula, verified 2026-08-02)
+Both water sensors are 10 k&Omega; B3380 NTC thermistors in a 10 k&Omega;
+divider behind a 1.3&times; gain stage, read by a 10-bit ADC. The factory
+firmware converts with the single-parameter B (beta) equation:
+
+```
+F     = adc_steps * gain          = 1024 * 1.3 = 1331.2
+Rinf  = R0 * exp(-beta / T0)      = 10000 * exp(-3380 / 298.15)
+R     = Rd / (F / raw - 1)          # Rd = 10000
+degC  = beta / ln(R / Rinf) - 273.15 # beta = 3380, T0 = 298.15 K (25 C)
+```
+
+Higher raw = colder (NTC). Recovered from the v2.6.0 firmware binary
+(forward function at 0x65110, inverse at 0x64ee8, parameter block in
+`.data` at VMA 0x11e120). **Proof:** running the firmware's inverse on
+the cloud's coolant setpoints reproduces a machine's `WT*` settings
+exactly - `CMet`/`CMut` 18134 mDeg &rarr; raw 754 = `WTub`, `CMdt` 18364
+mDeg &rarr; raw 751 = `WTvb`. That also identifies the `WT[u|v][a|b]`
+cloud settings as **precomputed per-sensor raw-ADC thresholds** for the
+two ~18 C coolant setpoints (the firmware compares raw readings directly
+against them at runtime instead of calling `log()` per sample);
+`WTaf`/`WTbf` are per-sensor float coefficients (both -2.0 as shipped,
+apparently the uncalibrated default - their exact use is not traced).
+
+Reference points: raw 640 &rarr; 27.0 C, 680 &rarr; 23.9 C, 740 &rarr;
+19.2 C; inversely 31.04 C &rarr; raw 591, 50.01 C &rarr; raw 391.
+
+**The former "best guess" `(value * -0.09653) + 94` was wrong** - roughly
+3-5 C high with an incorrect (linear) slope. Bench check against a
+thermometer with the loop at room-temperature equilibrium: the beta
+curve landed within ~1 C of measured, the linear guess was 3.4 C high.
+Anything derived from the old formula (thresholds, deltas) must be
+re-derived.
 
 ##### x_step_current
 Read/Write, ASCII, 0-127  
