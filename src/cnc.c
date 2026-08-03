@@ -681,8 +681,8 @@ static int cnc_run_with_options(struct cnc *self, struct cnc_run_options opts)
     } else {
       /* The waypoint action flags are only meaningful when a waypoint is
        * actually armed (num_steps > 0): scratch7 == 0 never fires, and a
-       * stale action flag would eat the end-of-data signal (resume(0)
-       * previously wedged the driver in RUNNING exactly this way). */
+       * stale action flag would eat the end-of-data signal, wedging the
+       * driver in RUNNING. */
       bool waypoint_armed = (num_steps > 0);
       self->status.state = STATE_RUNNING;
       self->status.waypoint_armed = waypoint_armed;
@@ -963,9 +963,9 @@ int cnc_single_z_step(struct cnc *self, bool direction)
   z_step_gpio = self->gpios[PIN_Z_STEP];
   z_dir_gpio = self->gpios[PIN_Z_DIR];
 
-  /* Hardware-verified (2026-07-26): Z_DIR driven HIGH moves the lens UP,
-   * away from the bed - the documented attr convention (1 = positive = away
-   * from the bed) is physically true with the raw drive. */
+  /* Hardware-verified: Z_DIR driven HIGH moves the lens UP, away from the
+   * bed - the documented attr convention (1 = positive = away from the bed)
+   * is physically true with the raw drive. */
   gpio_set_value(z_dir_gpio, direction);
   gpio_set_value(z_step_gpio, 1);
   udelay(2); /* DRV8818 wants a minimum 1us pulse duration */

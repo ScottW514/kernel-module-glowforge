@@ -158,7 +158,7 @@ Bits: 0: LASER_ON, 1: LASER_ENABLE, 2: BUTTON_LATCH, 3: LASER_LATCH, 4: INTERLOC
 
 ##### interlock_latch_reset
 Read, ASCII, 0-1  
-State of the interlock latch-reset line (a driven output, initialised low, read back via SION). Replaces the former ```interlock_reset``` LED-class interface.  
+State of the interlock latch-reset line (a driven output, initialised low, read back via SION).  
 
 ##### laser_enable
 Read, ASCII, 0-1  
@@ -432,7 +432,7 @@ Water temperature, downstream of heater. See the conversion below.
 Read, ASCII, 0-1023  
 Water temperature, upstream of heater. See the conversion below.  
 
-##### Coolant temperature conversion (factory formula, verified 2026-08-02)
+##### Coolant temperature conversion (factory formula)
 Both water sensors are 10 k&Omega; B3380 NTC thermistors in a 10 k&Omega;
 divider behind a 1.3&times; gain stage, read by a 10-bit ADC. The factory
 firmware converts with the single-parameter B (beta) equation:
@@ -458,13 +458,8 @@ apparently the uncalibrated default - their exact use is not traced).
 
 Reference points: raw 640 &rarr; 27.0 C, 680 &rarr; 23.9 C, 740 &rarr;
 19.2 C; inversely 31.04 C &rarr; raw 591, 50.01 C &rarr; raw 391.
-
-**The former "best guess" `(value * -0.09653) + 94` was wrong** - roughly
-3-5 C high with an incorrect (linear) slope. Bench check against a
-thermometer with the loop at room-temperature equilibrium: the beta
-curve landed within ~1 C of measured, the linear guess was 3.4 C high.
-Anything derived from the old formula (thresholds, deltas) must be
-re-derived.
+Bench-checked against a thermometer with the loop at room-temperature
+equilibrium: within ~1 C of measured.
 
 ##### x_step_current
 Read/Write, ASCII, 0-127  
@@ -535,12 +530,10 @@ step/laser command; if bit 7 is set, the low 7 bits are a laser power level:
     bit 3  Y_DIR         bit 7  0 = step byte, 1 = power byte (bits 0-6 = power)
 
 X/Y convention: DIR bit set = negative direction for X, positive for Y
-(Y1/Y2 are driven complementary). Z convention (hardware-verified
-2026-07-26, clean single-move observation): **bit 6 SET moves the lens UP,
-away from the bed = positive Z**; the position counter counts it as +Z and
-the ```z_step``` attr follows the same sense (1 = away from bed). Note:
-gfutilities pulsedata historically decoded this inverted (fixed alongside
-this documentation).
+(Y1/Y2 are driven complementary). Z convention (hardware-verified):
+**bit 6 SET moves the lens UP, away from the bed = positive Z**; the
+position counter counts it as +Z and the ```z_step``` attr follows the
+same sense (1 = away from bed).
 
 **Fixed byte density - no per-byte timing.** The engine consumes exactly one
 byte per timer tick at ```step_freq```. All velocity is expressed as step
@@ -608,4 +601,4 @@ Both values are internally truncated to multiples of MSECS_PER_UPDATE.
 #### /sys/class/leds/camera_mux_oe
 This controls the output on the camera multiplexer.  The ```brightness``` value should be set to 255.  Setting a value of 0 will shut the output off.  There is no reason to ever shut the output off.  
 
-Note: the interlock latch-reset line is now exposed by the cnc driver as the read-only ```interlock_latch_reset``` attribute (it was previously the ```/sys/class/leds/interlock_reset``` LED).
+The interlock latch-reset line is exposed by the cnc driver as the read-only ```interlock_latch_reset``` attribute.

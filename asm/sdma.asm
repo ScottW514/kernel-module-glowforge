@@ -224,10 +224,8 @@ upd_z_pos:
   bf upd_pos_done # if Z_STEP not set, don't update z position
   ld r0, (r7, 26) # get z position
   btsti r2, 6     # Z_DIR: bit 6 in pulse byte
-                  # Hardware-verified (2026-07-26, clean single-move test):
-                  # bit 6 SET moves the lens UP, away from the bed = +Z.
-                  # This counter (bit 6 -> +1) is therefore CORRECT; the
-                  # inverted party in audit N3 was gfutilities pulsedata.
+                  # Hardware-verified: bit 6 SET moves the lens UP, away
+                  # from the bed = +Z, so this counter counts bit 6 as +1.
   bt upd_z_pos2   # if Z_DIR set, add 1
   subi r0, 2      # otherwise subtract 1 (subtract 2, add 1)
 upd_z_pos2:
