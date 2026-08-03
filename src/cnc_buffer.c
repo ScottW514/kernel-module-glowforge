@@ -19,14 +19,27 @@
  * with this program; if not, write to the Free Software Foundation, Inc.,
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
+#include <linux/log2.h>
+#include <linux/moduleparam.h>
+
 #include "cnc_private.h"
 #include "sdma_macros.h"
 
 /**
- * Size of the contiguous memory region used as the pulse data buffer.
- * Must be a power of two.
+ * Size of the contiguous memory region used as the pulse data buffer, in
+ * MiB. Must be a power of two and fit within the cnc reserved-memory pool
+ * (cnc-pulsebuf in the device tree). Sizing: the grblHAL live feed keeps
+ * only ~200 ms (a few KB) in flight, while legacy cloud mode preloads a
+ * job's ENTIRE pulse file into the ring before playback - the ring is the
+ * cloud-mode job-length cap at ~1 MiB per 100 s of 10 kHz stream (16 MiB
+ * = ~28 min). Raise ring_mb (and the DT pool) for longer cloud jobs.
  */
-#define CNC_BUFFER_SIZE     (128 * SZ_1M)
+#define CNC_BUFFER_DEFAULT_MB 16
+
+static unsigned int ring_mb = CNC_BUFFER_DEFAULT_MB;
+module_param(ring_mb, uint, 0444);
+MODULE_PARM_DESC(ring_mb, "pulse ring size in MiB (power of two, must fit "
+                          "the cnc reserved pool; default 16)");
 
 /**
  * Enforce a minimum gap between head and tail.
@@ -38,8 +51,13 @@
 
 int cnc_buffer_init(struct cnc *self)
 {
+  if (!is_power_of_2(ring_mb) || ring_mb < 1 || ring_mb > 1024) {
+    dev_warn(self->dev, "ring_mb=%u invalid (power of two 1..1024); using %u",
+             ring_mb, CNC_BUFFER_DEFAULT_MB);
+    ring_mb = CNC_BUFFER_DEFAULT_MB;
+  }
   self->pulsebuf_total_bytes = 0;
-  self->pulsebuf_size = CNC_BUFFER_SIZE;
+  self->pulsebuf_size = ring_mb * SZ_1M;
   self->pulsebuf_virt = dma_alloc_coherent(self->dev, self->pulsebuf_size, &self->pulsebuf_phys, GFP_DMA|GFP_KERNEL);
   if (!self->pulsebuf_virt) {
     dev_err(self->dev, "unable to allocate coherent buffer of size %u", self->pulsebuf_size);
