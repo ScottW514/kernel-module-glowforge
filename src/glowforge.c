@@ -58,7 +58,7 @@ module_param(head_enabled, int, 0);
 /** kobject that provides /sys/glowforge */
 struct kobject *glowforge_kobj;
 
-ATOMIC_NOTIFIER_HEAD(dms_notifier_list);
+BLOCKING_NOTIFIER_HEAD(dms_notifier_list);
 
 static const struct of_device_id head_dt_ids[] = {
   { .compatible = "glowforge,head" },

@@ -30,11 +30,19 @@
  * "deadman switch" is tripped, i.e. a userspace process controlling the stepper
  * driver has crashed.
  * See cnc_api.c for more information on the deadman switch.
+ *
+ * The chain is blocking: handlers make their hardware safe over sleeping
+ * buses (PIC register zeroing is a sync SPI transfer, thermal safing
+ * reconfigures PWMs), so it may only be traversed from process context.
+ * The one trip point is the pulse device release. The panic path must
+ * not call it: nothing that sleeps can run at panic time, so panic
+ * safing is limited to the atomic motion stop (see cnc_panic_handler)
+ * with the hardware watchdog behind it.
  */
-extern struct atomic_notifier_head dms_notifier_list;
+extern struct blocking_notifier_head dms_notifier_list;
 
-#define dms_notifier_chain_register   atomic_notifier_chain_register
-#define dms_notifier_chain_unregister atomic_notifier_chain_unregister
-#define dms_notifier_call_chain       atomic_notifier_call_chain
+#define dms_notifier_chain_register   blocking_notifier_chain_register
+#define dms_notifier_chain_unregister blocking_notifier_chain_unregister
+#define dms_notifier_call_chain       blocking_notifier_call_chain
 
 #endif

@@ -1425,10 +1425,11 @@ static void beam_detect_latch_reset(struct cnc *self)
 #if INSTALL_PANIC_HANDLER
 static int cnc_panic_handler(struct notifier_block *nb, unsigned long action, void *data)
 {
-  /* stop timers and make the hardware safe if there's a panic */
+  /* Stop motion if there's a panic. Only the atomic stop runs here: the
+   * DMS chain handlers sleep (SPI/PWM safing) and nothing that sleeps
+   * can run at panic time - the hardware watchdog carries it from here. */
   struct cnc *self = container_of(nb, struct cnc, panic_notifier);
   _driver_stop(self, STATE_DISABLED); /* in atomic context; can't use cnc_disable() */
-  dms_notifier_call_chain(&dms_notifier_list, 0, NULL); /* shut down other subsystems */
   return 0;
 }
 #endif
