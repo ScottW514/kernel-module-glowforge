@@ -691,6 +691,14 @@ static int cnc_run_with_options(struct cnc *self, struct cnc_run_options opts)
         (opts.accelerate && !opts.backward && waypoint_armed);
       self->status.running_backward = opts.backward;
 
+      /* _driver_stop parks the FIRE line Hi-Z at every stop; if the
+       * latch is unlocked, restore SDMA drive for this run. A resume
+       * ramp keeps it parked until its waypoint re-enables it. */
+      if (!self->status.enable_laser_on_interrupt &&
+          gpio_get_value(self->gpios[PIN_LASER_LATCH_RESET]) == 0) {
+        gpio_direction_output(self->gpios[PIN_LASER_ON], 0);
+      }
+
       /* clear all fault conditions */
       self->status.triggered_faults &= fatal_fault_conditions;
 
