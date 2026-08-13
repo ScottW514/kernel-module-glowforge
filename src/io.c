@@ -24,6 +24,8 @@
 
 #include <linux/io.h>
 #include <linux/gpio.h>
+#include <linux/of.h>
+#include <linux/of_address.h>
 #include <linux/of_gpio.h>
 #include <linux/platform_device.h>
 #include <linux/pwm.h>
@@ -96,6 +98,39 @@ u32 io_base_address(int *gpios, size_t ngpios, pin_set pin_bits)
     }
   }
   return min_addr;
+}
+
+
+void io_verify_base_address(struct device *dev, struct device_node *of_node,
+  const struct pin_config *pin_configs, int *gpios, size_t ngpios,
+  pin_set pin_bits, u32 base_addr)
+{
+  int i;
+  u64 mask = 1;
+  for (i = 0; i < ngpios; i++, mask <<= 1) {
+    struct of_phandle_args args;
+    struct resource res;
+    u32 derived;
+    if (!(pin_bits & mask) || gpios[i] < 0) {
+      continue;
+    }
+    derived = GPIO_BASE_ADDRESS(GPIO_BANK_FROM_PIN_NUMBER(gpios[i]));
+    if (derived != base_addr) {
+      dev_warn(dev, "\"%s\" (gpio%d) is in the bank at %#x, but the pin set is "
+        "written through %#x\n", pin_configs[i].name, gpios[i], derived, base_addr);
+    }
+    if (of_parse_phandle_with_args(of_node, pin_configs[i].name, "#gpio-cells",
+        0, &args) != 0) {
+      continue;
+    }
+    if (of_address_to_resource(args.np, 0, &res) == 0 &&
+        res.start != (resource_size_t)derived) {
+      dev_warn(dev, "\"%s\" (gpio%d): controller is at %pa, bank math derives "
+        "%#x - GPIO numbering is not the static alias layout this driver "
+        "assumes\n", pin_configs[i].name, gpios[i], &res.start, derived);
+    }
+    of_node_put(args.np);
+  }
 }
 
 

@@ -65,6 +65,8 @@ struct pic {
   size_t rxbuf_size;
   /** Notifiers */
   struct notifier_block dms_notifier;
+  /** Work queue for LED brightness writes (SPI transfers). */
+  struct workqueue_struct *led_wq;
   /** LED devices */
   struct led_classdev lid_led;
   struct led_classdev button_led_1;

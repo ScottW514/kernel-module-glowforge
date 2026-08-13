@@ -74,13 +74,37 @@ int head_write_i2c_word(struct i2c_client *client, int reg, uint16_t new_value)
 }
 
 
+/**
+ * Puts the head in its safe state: emitters off, lens motor de-energized.
+ *
+ * Runs from the dead man's switch chain, which is blocking, so the I2C writes
+ * are allowed here; head_remove() uses it too.
+ *
+ * Deliberately not touched: air assist, purge air, and the white LED. The
+ * cooling engine owns the head fans, and airflow after an aborted cut is
+ * wanted rather than stopped; the white LED is the camera lamp, owned by the
+ * control daemon. Turning either off here would fight its owner.
+ */
 static void head_make_safe(struct head_data *self)
 {
-  int i;
   struct i2c_client *client = to_i2c_client(self->dev);
-  // i2c_smbus_write_byte_data(client, SEL_FAN(FAN_AIR_ASSIST, REG_FAN_SETTING), 0x00);
-  // i2c_smbus_write_byte_data(client, SEL_FAN(FAN_LENS_PURGE, REG_FAN_SETTING), 0x00);
-  dev_err(self->dev, "making safe");
+  int ret;
+
+  dev_info(self->dev, "making safe");
+
+  ret = head_write_i2c_byte(client, HEAD_REG_RW_GRP | HEAD_REG_BITS_CLEAR,
+    HEAD_REG_RW_Z_ENABLE | HEAD_REG_RW_Z_CURRENT);
+  if (ret < 0) {
+    dev_err(self->dev, "cannot de-energize the lens motor: %d", ret);
+  }
+  ret = head_write_i2c_word(client, HEAD_REG_MSR_LASER, 0);
+  if (ret < 0) {
+    dev_err(self->dev, "cannot turn off the measure laser: %d", ret);
+  }
+  ret = head_write_i2c_word(client, HEAD_REG_UV_LED, 0);
+  if (ret < 0) {
+    dev_err(self->dev, "cannot turn off the UV LED: %d", ret);
+  }
 }
 
 

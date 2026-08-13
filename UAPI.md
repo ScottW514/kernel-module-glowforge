@@ -9,6 +9,25 @@ NOTE: This is an OpenGlow Fork of [https://github.com/Glowforge/kernel-module-gl
 There are differences between the OpenGlow implementation and the Glowforge original.  
 This documentation only applies to the OpenGlow fork.  
 
+#### Build assumptions
+The target is the factory i.MX6 Solo control board, which is **uniprocessor**, and the
+module's locking is written for it: the state spinlock (`spin_lock_bh()`) serializes the
+main path against the SDMA and hrtimer callbacks, which is sufficient when only one CPU
+can execute kernel code at a time. Building for a multiprocessor i.MX6 (Dual/Quad) needs
+that locking re-reviewed first — in particular every place a callback reads or writes
+driver state without taking the lock.
+
+On a kernel panic the driver stops the EPIT and drives the output pins safe directly (the
+laser FIRE line to high impedance, the charge pump low so the hardware watchdog stops
+being fed, the latch reset asserted, and the steppers de-energized). SDMA and EPIT run
+without the CPU, so without this the machine would play out the rest of the pulse ring
+with no kernel alive.
+
+On a dead man's switch trip the head is put in its safe state — measure laser and UV LED
+off, lens motor de-energized. The head fans and the white LED are deliberately left as
+they are: they belong to the cooling engine and the camera respectively, and airflow after
+an aborted cut is wanted.
+
 ### SYSFS / Device Structure
 ```pre
 /sys/glowforge/cnc       <- Motion control, machine state

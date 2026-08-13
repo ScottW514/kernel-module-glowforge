@@ -18,7 +18,7 @@ ASM = sdma.asm
 # the Yocto recipe pulls in perl-native).
 SDMA_ASSEMBLER = PERL5LIB=$(TOOLS_DIR) perl $(TOOLS_DIR)/sdma_asm.pl
 
-ccflags-y += -I$(PWD) -Wno-unknown-pragmas -Wno-error
+ccflags-y += -I$(PWD) -Wno-unknown-pragmas
 
 obj-m += $(MODULE_NAME).o
 $(MODULE_NAME)-objs := $(foreach srcfile,$(SRC),$(SRC_DIR)/$(srcfile:.c=.o))
@@ -27,6 +27,11 @@ SDMA_SCRIPT_ASSEMBLED = $(addprefix $(SRC_DIR)/,$(ASM:.asm=.asm.h))
 vpath %.asm $(ASM_DIR)
 
 .PHONY: all clean modules_install
+
+# A failed assembly leaves a truncated (or empty) .asm.h that make would
+# otherwise treat as up to date on the next run, silently building a broken
+# script into the module.
+.DELETE_ON_ERROR:
 
 all: $(SDMA_SCRIPT_ASSEMBLED)
 	$(MAKE) -C $(KERNEL_SRC) M=$(PWD) modules

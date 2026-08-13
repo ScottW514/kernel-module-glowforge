@@ -40,8 +40,10 @@
 #include <linux/platform_data/dma-imx-sdma.h>
 #include <linux/platform_data/epit-imx.h>
 
-/* If 1, installs a handler that disables all hardware on a kernel panic. */
-#define INSTALL_PANIC_HANDLER 0
+/* If 1, installs a handler that disables all hardware on a kernel panic.
+ * SDMA and EPIT run without the ARM core, so a panic mid-cut otherwise leaves
+ * the machine playing out the rest of the ring. */
+#define INSTALL_PANIC_HANDLER 1
 
 struct cnc;
 
@@ -413,6 +415,12 @@ struct cnc {
   spinlock_t status_lock;
   /** GPIO pins. */
   int gpios[NUM_GPIO_PINS];
+  /**
+   * Commanded decay mode per axis. Mixed decay is the pin's high-impedance
+   * state, so the mode is not recoverable from the pin value; cnc_set_decay_mode
+   * is the only writer and probe seeds this from how the pins are requested.
+   */
+  enum cnc_decay_mode decay_mode[NUM_AXES];
   /** Laser power PWM channel. */
   struct pwm_channel laser_pwm;
   /** 40V power supply. */

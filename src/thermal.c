@@ -19,6 +19,7 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 #include "thermal_private.h"
+#include "thermal.h"
 #include "device_attr.h"
 #include "io.h"
 #include "uapi/glowforge.h"

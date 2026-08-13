@@ -46,6 +46,11 @@
 #define HEAD_REG_RO_ACCEL_IRQ 0x01 << 1
 #define HEAD_REG_RO_BEAM_DET_DIG 0x01 << 2
 
+/* Bit writes address a group register with one of these modifiers; the data
+ * byte is then the bit mask to set or clear. */
+#define HEAD_REG_BITS_SET 0x40
+#define HEAD_REG_BITS_CLEAR 0x80
+
 #define HEAD_REG_RW_GRP 0x06
 #define HEAD_REG_RW_Z_ENABLE 0x01 << 0
 #define HEAD_REG_RW_Z_CURRENT 0x01 << 1

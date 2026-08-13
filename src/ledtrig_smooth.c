@@ -45,6 +45,8 @@
  * routines in kernel space.
  */
 
+#include "ledtrig_smooth.h"
+
 #include <linux/device.h>
 #include <linux/leds.h>
 #include <linux/slab.h>
@@ -218,7 +220,7 @@ static void timestep(struct led_classdev *led_cdev)
 }
 
 
-fixed value_from_raw_brightness(int raw_brightness)
+static fixed value_from_raw_brightness(int raw_brightness)
 {
   /* Binary search to find the index of the given 10-bit brightness value, or */
   /* the index of the next-highest value. */

@@ -21,14 +21,12 @@
  */
 
 #include "pic_private.h"
+#include "ledtrig_smooth.h"
 
 #include <linux/workqueue.h>
 
 /* LED PWMs have 10 bits of resolution */
 #define PIC_LED_MAX_BRIGHTNESS  1023
-
-int ledtrig_smooth_init(void);
-int ledtrig_smooth_remove(void);
 
 /**
  * LED set commands are offloaded to a work queue; this struct encapsulates
@@ -87,13 +85,15 @@ static void pic_led_set(struct spi_device *spi, enum pic_register reg, enum led_
 
   if (brightness > PIC_LED_MAX_BRIGHTNESS) { brightness = PIC_LED_MAX_BRIGHTNESS; }
 
+  if (!self->led_wq) { return; }
+
   led_work = kzalloc(sizeof(*led_work), GFP_ATOMIC);
   if (!led_work) { return; }
   INIT_WORK(&led_work->work, pic_led_set_work);
   led_work->self = self;
   led_work->reg = reg;
   led_work->value = brightness;
-  schedule_work(&led_work->work);
+  queue_work(self->led_wq, &led_work->work);
 }
 
 
@@ -117,6 +117,16 @@ int pic_register_leds(struct spi_device *spi)
   ret = ledtrig_smooth_init();
   if (ret) {
     return ret;
+  }
+
+  /* Brightness writes are SPI transfers, so they run from a work queue. It is
+   * this driver's own, ordered: the system-wide queue must not be flushed at
+   * teardown, and ordering keeps a burst of writes to one LED landing in the
+   * order they were requested. */
+  self->led_wq = alloc_ordered_workqueue("glowforge_led", 0);
+  if (!self->led_wq) {
+    ledtrig_smooth_remove();
+    return -ENOMEM;
   }
 
   CONFIGURE_LED_CLASSDEV(self, lid_led);
@@ -143,5 +153,10 @@ void pic_unregister_leds(struct spi_device *spi)
   UNREGISTER_LED_CLASSDEV(self, button_led_1);
   UNREGISTER_LED_CLASSDEV(self, button_led_2);
   UNREGISTER_LED_CLASSDEV(self, button_led_3);
-  flush_scheduled_work();
+  /* No classdev can queue any more work; drain what is left and drop the
+   * queue (destroy_workqueue flushes first). */
+  if (self->led_wq) {
+    destroy_workqueue(self->led_wq);
+    self->led_wq = NULL;
+  }
 }

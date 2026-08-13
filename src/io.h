@@ -128,6 +128,30 @@ int io_init_gpios(struct device_node *of_node, const struct pin_config *pin_conf
 u32 io_base_address(int *gpios, size_t ngpios, pin_set pin_bits);
 
 /**
+ * Checks the assumptions io_base_address() rests on and logs any violation.
+ *
+ * The bank address is derived from the Linux GPIO number, which only holds
+ * while GPIO numbering follows the static alias layout, and a single base
+ * address is only meaningful if every pin in the set shares one bank. Both
+ * are compared against the device tree (the controller each pin's phandle
+ * points at, and its reg address).
+ *
+ * @param dev          Device used for logging
+ * @param of_node      Node carrying the pin properties
+ * @param pin_configs  Pin configuration array (supplies the property names)
+ * @param gpios        Array of GPIOs
+ * @param ngpios       Size of the gpios array
+ * @param pin_bits     Bit mask of the pins to check
+ * @param base_addr    The base address io_base_address() returned for the set
+ *
+ * @note Warns rather than failing: a mismatch means the derived address is
+ *       wrong, but the machine is more useful up with a loud log than down.
+ */
+void io_verify_base_address(struct device *dev, struct device_node *of_node,
+  const struct pin_config *pin_configs, int *gpios, size_t ngpios,
+  pin_set pin_bits, u32 base_addr);
+
+/**
  * Applies the given set of GPIO pin changes.
  *
  * @param gpios       Array of GPIOs

@@ -36,20 +36,10 @@
 #include <linux/gpio/consumer.h>
 #include <linux/interrupt.h>
 #include <linux/of_reserved_mem.h>
+#include <linux/panic_notifier.h>
 
 /** Module parameters */
 extern int cnc_enabled;
-
-/* needs to be exposed because imx6 GPIO doesn't provide get_direction() */
-struct gpio_desc {
-  struct gpio_chip *chip;
-  unsigned long flags;
-#ifdef CONFIG_DEBUG_FS
-  const char *label;
-#endif
-};
-#define FLAG_IS_OUT 1
-
 
 /**
  * If 1, the module starts up in the DISABLED state when it's loaded, and does
@@ -63,6 +53,18 @@ struct gpio_desc {
 #define STEP_FREQUENCY_MIN      1000
 #define STEP_FREQUENCY_MAX      200000
 #define STEP_FREQUENCY_DEFAULT  10000
+
+/**
+ * The step frequency is the EPIT clock divided by an integer, so a divisor of
+ * at least this much is needed for the requested frequency to be met closely
+ * (100 gives 1 % worst-case quantization). Anything below the resulting clock
+ * rate means the device tree has paired the timer with an unexpected clock.
+ */
+#define MIN_EPIT_DIVISOR        100
+#define MIN_USABLE_EPIT_RATE    (STEP_FREQUENCY_MAX * MIN_EPIT_DIVISOR)
+
+/** The SDMA has 32 channels; channel 0 is the command channel. */
+#define MAX_SDMA_CHANNELS       32
 
 /** Number of bits of PWM resolution */
 #define LASER_PWM_BITS          7
@@ -519,7 +521,7 @@ static enum hrtimer_restart ramp_update_tasklet_fn(struct hrtimer *timer)
  * end-of-data interrupt every ~255 parked iterations until we stop the EPIT,
  * so the lost half is redelivered shortly.
  */
-void cnc_sdma_interrupt(void *param)
+static void cnc_sdma_interrupt(void *param)
 {
   struct cnc *self = (struct cnc *)param;
   spin_lock_bh(&self->status_lock);
@@ -1247,30 +1249,22 @@ int cnc_set_decay_mode(struct cnc *self, enum cnc_axis axis, enum cnc_decay_mode
     case MODE_DECAY_FAST:  gpio_direction_output(self->gpios[pin], 1); break;
     default:               return -EINVAL;
   }
+  self->decay_mode[axis] = mode;
   return 0;
 }
 
 
 enum cnc_decay_mode cnc_get_decay_mode(struct cnc *self, enum cnc_axis axis)
 {
-  int pin;
-  struct gpio_desc *desc;
-  switch (axis) {
-    case AXIS_X: pin = PIN_X_DECAY; break;
-    case AXIS_Y: pin = PIN_Y_DECAY; break;
-    default:     return -EINVAL;
+  /* Mixed decay is the pin's high-impedance state, so the mode cannot be read
+   * back from the pin value alone and gpiolib exposes no stable way to read a
+   * line's direction from a driver. The commanded mode is tracked instead;
+   * cnc_set_decay_mode is the only writer of these pins, and probe seeds the
+   * value from the direction the pins are requested with. */
+  if (axis < 0 || axis >= NUM_AXES) {
+    return -EINVAL;
   }
-  /* adapted from gpio_direction_show(), drivers/gpio/gpiolib.c */
-  desc = gpio_to_desc(self->gpios[pin]);
-  if (!desc) {
-    return -EIO;
-  }
-  gpiod_get_direction(desc);
-  if (test_bit(FLAG_IS_OUT, &desc->flags) == 0) {
-    return MODE_DECAY_MIXED;
-  } else {
-    return (gpiod_get_value(desc)) ? MODE_DECAY_FAST : MODE_DECAY_SLOW;
-  }
+  return self->decay_mode[axis];
 }
 
 
@@ -1433,12 +1427,24 @@ static void beam_detect_latch_reset(struct cnc *self)
 #if INSTALL_PANIC_HANDLER
 static int cnc_panic_handler(struct notifier_block *nb, unsigned long action, void *data)
 {
-  /* Stop motion if there's a panic. Only the atomic stop runs here: the
-   * DMS chain handlers sleep (SPI/PWM safing) and nothing that sleeps
-   * can run at panic time - the hardware watchdog carries it from here. */
   struct cnc *self = container_of(nb, struct cnc, panic_notifier);
-  _driver_stop(self, STATE_DISABLED); /* in atomic context; can't use cnc_disable() */
-  return 0;
+  /* Runs on the atomic panic chain, so this does only what cannot sleep,
+   * take a mutex, or wait on another context:
+   *
+   *   epit_stop()     two register writes. Stops the tick that clocks pulse
+   *                   bytes out of the ring - without it SDMA and EPIT play
+   *                   the rest of the ring out with no kernel alive.
+   *   io_change_pins() direct GPIO writes. Parks the FIRE line Hi-Z, drops
+   *                   the charge pump (so the hardware watchdog cannot be
+   *                   fed and the laser dies within its timeout), asserts
+   *                   the laser latch reset, and de-energizes the steppers.
+   *
+   * Deliberately NOT done: _driver_stop() (cancels an hrtimer, which can wait
+   * on a callback that will never run again, and notifies sysfs), the
+   * regulator (sleeps), and the DMS chain (blocking; SPI and I2C safing). */
+  epit_stop(self->epit);
+  io_change_pins(self->gpios, NUM_GPIO_PINS, cnc_shutdown_pin_changes);
+  return NOTIFY_DONE;
 }
 #endif
 
@@ -1448,6 +1454,7 @@ int cnc_probe(struct platform_device *pdev)
   struct cnc *self;
   struct device_node *epit_np = NULL;
   u32 sdma_params[2];
+  u32 epit_rate;
   int ret = 0;
   /* Contract guard: the header's mirrored SDMA context layout must match the
    * size the imx-sdma driver asserts against the same constant. */
@@ -1504,6 +1511,17 @@ int cnc_probe(struct platform_device *pdev)
   if (ret) {
     goto failed_io_init;
   }
+  /* Both decay pins are requested as inputs, which is mixed decay. */
+  self->decay_mode[AXIS_X] = MODE_DECAY_MIXED;
+  self->decay_mode[AXIS_Y] = MODE_DECAY_MIXED;
+  /* The SDMA script writes a single GPIO data register whose address is
+   * derived from the Linux GPIO numbers, assuming the static alias layout
+   * (gpio N lives in bank N/32+1). Check that against the device tree so a
+   * numbering change shows up in the log instead of silently retargeting
+   * every step and laser write. */
+  io_verify_base_address(&pdev->dev, pdev->dev.of_node, pin_configs,
+    self->gpios, NUM_GPIO_PINS, cnc_sdma_pin_set,
+    io_base_address(self->gpios, NUM_GPIO_PINS, cnc_sdma_pin_set));
 
   /* Set up PWM */
   ret = io_init_pwms(&pdev->dev, &laser_pwm_config, &self->laser_pwm, 1);
@@ -1528,6 +1546,21 @@ int cnc_probe(struct platform_device *pdev)
   if (ret) {
     goto failed_epit_init;
   }
+  /* Step frequencies are this clock divided by an integer, so the clock the
+   * device tree pairs with the EPIT sets both the ceiling and the
+   * quantization. Read it back (the divisor for 1 Hz is the rate) and state
+   * it, rather than leaving the pairing implicit. */
+  epit_rate = epit_hz_to_divisor(self->epit, 1);
+  if (!epit_rate) {
+    ret = dev_err_probe(&pdev->dev, -ENODEV, "EPIT clock rate reads as zero");
+    goto failed_epit_init;
+  }
+  dev_info(&pdev->dev, "EPIT clock %u Hz\n", epit_rate);
+  if (epit_rate < MIN_USABLE_EPIT_RATE) {
+    dev_warn(&pdev->dev, "EPIT clock %u Hz quantizes step frequencies coarsely "
+      "above %u Hz; check which clock the device tree pairs with the timer\n",
+      epit_rate, epit_rate / MIN_EPIT_DIVISOR);
+  }
 
   /* Read SDMA channel number and load address */
   if (of_property_read_u32_array(pdev->dev.of_node, "sdma-params",
@@ -1536,6 +1569,13 @@ int cnc_probe(struct platform_device *pdev)
     self->sdma_script_origin = sdma_params[1];
   } else {
     ret = dev_err_probe(&pdev->dev, -ENODEV, "sdma-params property not specified");
+    goto failed_sdma_init;
+  }
+  /* Channel 0 is the SDMA command channel and 32 channels exist. */
+  if (self->sdma_ch_num == 0 || self->sdma_ch_num >= MAX_SDMA_CHANNELS) {
+    ret = dev_err_probe(&pdev->dev, -EINVAL,
+      "sdma-params channel %u out of range (1..%u)",
+      self->sdma_ch_num, MAX_SDMA_CHANNELS - 1);
     goto failed_sdma_init;
   }
   /* Set up SDMA and get a channel reference */
@@ -1550,6 +1590,12 @@ int cnc_probe(struct platform_device *pdev)
       self->sdma_ch_num);
     goto failed_sdma_init;
   }
+  /* This channel is driven directly, outside dmaengine's allocator, so it
+   * must not also be handed to a peripheral through a dmas property. State
+   * the claim in the log; the pre-run script verification catches the case
+   * where something else has since reprogrammed it. */
+  dev_info(&pdev->dev, "SDMA channel %u reserved for pulse playback "
+    "(script at halfword %u)\n", self->sdma_ch_num, self->sdma_script_origin * 2);
 
   /* Load the SDMA script */
   ret = load_sdma_script(self);
