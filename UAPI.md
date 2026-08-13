@@ -174,10 +174,11 @@ Bits: 0: X Axis, 1: Y1 Axis, 2: Y2 Axis
 Read, ASCII, 0-31  
 Raw snapshot of the laser-safety-chain GPIOs as a bitmask. Monitoring only; enforcement is in the hardware AND-gate.  
 Bits: 0: LASER_ON, 1: LASER_ENABLE, 2: BUTTON_LATCH, 3: LASER_LATCH, 4: INTERLOCK_LATCH_RESET  
+Bits 1, 3 and 4 are driven outputs: mainline gpio-mxc reads output lines back from the data register, so those bits report the value the SoC last drove, not a sense of the pad. Bit 3 is therefore the authoritative view of what the driver commanded the latch to do (`laser_latch` is write-only) and not evidence that the latch hardware responded — the physical proof is `laser_on`/`laser_on_sampled`, which read the gated output of the safety AND-gate.  
 
 ##### interlock_latch_reset
 Read, ASCII, 0-1  
-State of the interlock latch-reset line (a driven output, initialised low, read back via SION).  
+State of the interlock latch-reset line (a driven output, initialised low; read back from the data register, i.e. the value last driven).  
 
 ##### laser_enable
 Read, ASCII, 0-1  
