@@ -491,7 +491,15 @@ static enum hrtimer_restart ramp_update_tasklet_fn(struct hrtimer *timer)
       _driver_stop(self, STATE_IDLE);
       return HRTIMER_NORESTART;
     }
-    self->ramp_step_freq -= self->ramp_step_freq_delta;
+    /* Saturating decrement: an unsigned underflow here would program
+     * the EPIT with a degenerate divisor (see epit_hz_to_divisor) and
+     * turn the decel tail into a max-rate burst - or, in the wrap
+     * case, wedge this loop in RUNNING for hours. */
+    if (self->ramp_step_freq > RAMP_MIN_STEP_FREQUENCY + self->ramp_step_freq_delta) {
+      self->ramp_step_freq -= self->ramp_step_freq_delta;
+    } else {
+      self->ramp_step_freq = RAMP_MIN_STEP_FREQUENCY;
+    }
   }
   else if (self->status.accelerating) {
     self->ramp_step_freq += self->ramp_step_freq_delta;
@@ -529,9 +537,13 @@ static void cnc_sdma_interrupt(void *param)
     /* Waypoint reached (scratch7 hit zero). Consume the armed actions. */
     self->status.waypoint_armed = false;
     if (self->status.enable_laser_on_interrupt) {
-      /* Re-enable SDMA control of the laser line (end of a resume ramp). */
+      /* Re-enable SDMA control of the laser line (end of a resume ramp)
+       * - gated on the laser latch exactly like a run start: a locked
+       * latch means the run stays laser-less, waypoint or no waypoint. */
       self->status.enable_laser_on_interrupt = false;
-      gpio_direction_output(self->gpios[PIN_LASER_ON], 0);
+      if (gpio_get_value(self->gpios[PIN_LASER_LATCH_RESET]) == 0) {
+        gpio_direction_output(self->gpios[PIN_LASER_ON], 0);
+      }
     }
     if (self->status.decel_on_interrupt) {
       /* Start the controlled deceleration (end of a backtrack). */
@@ -1024,13 +1036,25 @@ int cnc_set_laser_latch(struct cnc *self, int value)
 {
   /* If value == 0, latch is unlocked and LASER_ON is an output. */
   /* Otherwise, latch is locked and LASER_ON is high impedance. */
+  spin_lock_bh(&self->status_lock);
   gpio_set_value(self->gpios[PIN_LASER_LATCH_RESET], value);
   if (value == 0) {
-    /* Allow LASER_ON to be driven by sdma. */
-    gpio_direction_output(self->gpios[PIN_LASER_ON], 0);
+    /* Allow LASER_ON to be driven by sdma - but never while a run or a
+     * ramp is in flight: a controlled stop keeps consuming pulse bytes
+     * with the FIRE line parked Hi-Z, and restoring drive here would
+     * play the remaining fire bits at reduced speed (a deeper burn at
+     * the stop point). Run start (and the resume waypoint) restore the
+     * drive themselves when the latch is unlocked. The lock also keeps
+     * this write from racing _driver_stop into an idle state with FIRE
+     * left driven. */
+    if (self->status.state != STATE_RUNNING &&
+        !self->status.accelerating && !self->status.decelerating) {
+      gpio_direction_output(self->gpios[PIN_LASER_ON], 0);
+    }
   } else {
     gpio_direction_input(self->gpios[PIN_LASER_ON]);
   }
+  spin_unlock_bh(&self->status_lock);
   return 0;
 }
 
