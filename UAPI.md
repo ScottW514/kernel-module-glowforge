@@ -24,9 +24,11 @@ without the CPU, so without this the machine would play out the rest of the puls
 with no kernel alive.
 
 On a dead man's switch trip the head is put in its safe state — measure laser and UV LED
-off, lens motor de-energized. The head fans and the white LED are deliberately left as
-they are: they belong to the cooling engine and the camera respectively, and airflow after
-an aborted cut is wanted.
+off, lens motor de-energized — and the thermal loop de-energizes its heat sources (loop
+heater and TEC). Everything airflow- and circulation-related is deliberately left as it
+is: the head fans, the white LED, the coolant pump, and the exhaust/intake fans belong to
+the cooling engine and the camera respectively, airflow and coolant circulation after an
+aborted cut are wanted, and a pump stop/start cycle can airlock the loop.
 
 ### SYSFS / Device Structure
 ```pre
@@ -535,7 +537,7 @@ Interface to the pulse-stream ring buffer. Exclusive-open: a second open fails w
 Seeking to 0 will clear program data, byte counters, and position counters.  
 Seeking to 1 will clear program data and byte counters.  
 Seeking to 2 will clear position counters.  
-Locking the file (flock LOCK_EX) arms the "dead man's switch": if the fd is closed while locked and a program is running, the device performs an emergency stop.  
+Locking the file (flock LOCK_EX) arms the "dead man's switch": if the fd is closed while locked and a program is running, the device performs an emergency stop. The switch is per-holder state: every fresh open starts with it disarmed, shared locks (LOCK_SH) are rejected with EINVAL, and LOCK_UN disarms.  
 
 ##### Pulse-stream feeder contract
 Everything a streaming feeder (e.g. a grblHAL step backend) must obey. All of

@@ -374,8 +374,11 @@ struct cnc {
   struct miscdevice pulsedev;
   /** Pointer to dirent of "state" sysfs attribute */
   struct kernfs_node *state_attr_node;
-  /** Lock to ensure mutually exclusive access to /dev/glowforge. */
-  struct mutex lock;
+  /** Nonzero (bit 0) while /dev/glowforge is open. Not a mutex: the
+   *  final close routinely runs in a task that did not open() (the
+   *  broker hands the fd to inheriting children), and a mutex must be
+   *  released by its owner. */
+  unsigned long pulsedev_in_use;
   /** Hardware timer. */
   struct epit *epit;
   /** Pointer to the contiguous array of pulse data. */

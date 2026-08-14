@@ -20,6 +20,7 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
+#include <linux/bitops.h>
 #include <linux/filelock.h>
 #include "cnc_private.h"
 #include "device_attr.h"
@@ -36,12 +37,14 @@
 static int pulsedev_open(struct inode *inode, struct file *filp)
 {
   DEV_SELF_FROM_FILP(filp);
-  if (!mutex_trylock(&self->lock)) {
+  if (test_and_set_bit(0, &self->pulsedev_in_use)) {
     dev_warn(dev, PULSE_DEVICE_PATH " is in use");
     return -EBUSY;
-  } else {
-    dev_info(dev, PULSE_DEVICE_PATH " opened");
   }
+  /* A fresh open must not inherit the previous holder's armed dead man's
+   * switch; the new holder arms its own with flock(LOCK_EX). */
+  self->deadman_switch_active = false;
+  dev_info(dev, PULSE_DEVICE_PATH " opened");
   return 0;
 }
 
@@ -61,7 +64,7 @@ static int pulsedev_close(struct inode *inode, struct file *filp)
     dms_notifier_call_chain(&dms_notifier_list, 0, NULL);
   }
   cnc_set_laser_latch(self, 1); /* lock laser on close */
-  mutex_unlock(&self->lock);
+  clear_bit(0, &self->pulsedev_in_use);
   return 0;
 }
 
@@ -90,6 +93,14 @@ static int pulsedev_fsync(struct file *filp, loff_t start, loff_t end, int datas
 static int pulsedev_flock(struct file *filp, int cmd, struct file_lock *fl)
 {
   DEV_SELF_FROM_FILP(filp);
+  if (cmd != F_SETLK && cmd != F_SETLKW) {
+    return -EINVAL;
+  }
+  /* A shared lock is meaningless on a single-writer device and must not
+   * arm (or silently disarm) the dead man's switch. */
+  if (fl->c.flc_type == F_RDLCK) {
+    return -EINVAL;
+  }
   /* Arm or disarm the dead man's switch */
   self->deadman_switch_active = (fl->c.flc_type != F_UNLCK);
   dev_info(dev, "dms is %s", (self->deadman_switch_active) ? "active" : "inactive");

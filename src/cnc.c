@@ -1493,7 +1493,6 @@ int cnc_probe(struct platform_device *pdev)
   }
   self->dev = &pdev->dev;
 
-  mutex_init(&self->lock);
   spin_lock_init(&self->status_lock);
   tasklet_init(&self->fault_tasklet, fault_tasklet_fn, (unsigned long)self);
   cnc_set_step_frequency(self, STEP_FREQUENCY_DEFAULT);
@@ -1710,7 +1709,6 @@ failed_io_init:
   cnc_buffer_destroy(self);
 failed_buffer_init:
   of_reserved_mem_device_release(self->dev);
-  mutex_destroy(&self->lock);
   return ret;
 }
 
@@ -1741,7 +1739,6 @@ void cnc_remove(struct platform_device *pdev)
   misc_deregister(&self->pulsedev);
   cnc_buffer_destroy(self);
   of_reserved_mem_device_release(self->dev);
-  mutex_destroy(&self->lock);
   tasklet_kill(&self->fault_tasklet);
   dev_info(&pdev->dev, "%s: done", __func__);
   return;

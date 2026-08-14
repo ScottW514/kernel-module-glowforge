@@ -69,10 +69,9 @@ static const pin_id tach_pin_ids[THERMAL_NUM_TACH_SIGNALS] = {
 };
 
 /**
- * Pin changes to apply when the driver is unloaded.
+ * Pin changes for the safe state: heat sources de-energized.
  */
-DEFINE_PIN_CHANGE_SET(thermal_shutdown_pin_changes,
-  {PIN_WATER_PUMP, 0},
+DEFINE_PIN_CHANGE_SET(thermal_safe_pin_changes,
   {PIN_WATER_HEATER, 0},
   {PIN_TEC, 0},
 );
@@ -81,14 +80,22 @@ DEFINE_PIN_CHANGE_SET(thermal_shutdown_pin_changes,
 
 #pragma mark - Deadman switch handler
 
-/* Deadman switch trip notification */
+/**
+ * Puts the loop in its safe state: heater and TEC de-energized.
+ *
+ * Deliberately not touched: the coolant pump and the exhaust/intake PWMs.
+ * The control daemon's cooling engine owns those channels, coolant
+ * circulation and airflow after an aborted cut are wanted rather than
+ * stopped (the tube is hot and the workpiece may be smoldering), and a
+ * pump stop/start cycle can airlock the loop. Runs from the dead man's
+ * switch chain; thermal_remove() uses it too.
+ */
 static void thermal_make_safe(struct thermal *self)
 {
-  int i;
-  io_change_pins(self->gpios, THERMAL_NUM_GPIO_PINS, thermal_shutdown_pin_changes);
-  for (i = 0; i < THERMAL_NUM_PWM_CHANNELS; i++) {
-    io_pwm_set_duty_cycle(&self->pwms[i], 0);
-  }
+  /* Zero the soft-PWM duty first so the running heater timer holds the
+   * pin low instead of re-energizing it on its next callback. */
+  thermal_set_heater_duty_fraction(self, 0);
+  io_change_pins(self->gpios, THERMAL_NUM_GPIO_PINS, thermal_safe_pin_changes);
   dev_err(self->dev, "making safe");
 }
 
