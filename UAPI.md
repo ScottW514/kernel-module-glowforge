@@ -148,7 +148,7 @@ Writing "1" to this will switch the device to the "disabled" state.
 
 ##### enable
 Write, ASCII, 1  
-Writing "1" to this will switch the device to the "enabled" state.
+Writing "1" to this will switch the device to the "enabled" (idle) state. From "disabled" this powers the steppers on. From "fault" this is the explicit recovery lever: it clears the latched faults and returns to idle, but only once every non-ignored fault line has physically cleared — a still-asserted line refuses with EPERM.
 
 ##### faults
 Read, ASCII, 0-7  
@@ -220,7 +220,7 @@ Bytes: Value
 04-07: Y position in steps  
 08-11: Z position in steps  
 12-15: Program bytes processed  
-16-19: Program size in bytes
+16-19: Program size in bytes (saturates at 4 GiB under a long live stream)  
 20-31: Reserved  
 
 ##### ramp_rate
@@ -230,10 +230,11 @@ Independent of ```step_freq```; the rate is constant rather than scaling with th
 Cannot be changed while a program is running (returns -EBUSY).  
 
 ##### resume
-Write, ASCII, -2147483647 - 2147483647  
-Negative values: Laser disabled. Accelerate backwards, run number of specified steps, then decelerate and stop.  
+Write, ASCII, -268435455 - 268435455  
+Negative values: Laser disabled. Accelerate backwards, run number of specified steps, then decelerate and stop. Refused (EPERM) if the ring has been live-streamed since the last data clear — backtracking is a preload-model operation, and a streamed ring holds stale bytes beyond the retained gap.  
 Positive values: Accelerate forward, run number of requested steps, reenable laser, and continue program normally.  
-Zero: Accelerate forward, continue program without reenabling laser.
+Zero: Accelerate forward, continue program without reenabling laser.  
+The step count is a 28-bit waypoint counter; magnitudes at or above 2^28 are rejected with EINVAL rather than silently truncated.
 
 ##### run
 Write, ASCII, 1  
@@ -249,7 +250,7 @@ The current CNC state:
 "idle": Steppers are on but no program is in progress  
 "running": A program is in progress  
 "disabled": Steppers are disabled, no program in progress  
-"fault": Stepper driver fault  
+"fault": Stepper driver fault. Recoverable via ```enable``` once every non-ignored fault line has physically cleared.  
 "underrun": A streaming feeder (see ```streaming```) let the pulse buffer run dry mid-run. The stop is instantaneous (no deceleration), so steps may have been skipped at speed and the reported position can no longer be trusted. New runs are refused until the underrun is acknowledged by writing "1" to ```stop```; the feeder should treat this as an alarm and re-home before continuing.  
 
 ##### step_freq

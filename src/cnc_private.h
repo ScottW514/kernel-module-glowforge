@@ -387,8 +387,18 @@ struct cnc {
   dma_addr_t pulsebuf_phys;
   /** Size in bytes of the contiguous array of pulse data. */
   uint32_t pulsebuf_size;
-  /** Total bytes of pulse data enqueued since last clear */
-  uint32_t pulsebuf_total_bytes;
+  /** Total bytes of pulse data enqueued since last clear. 64-bit: a live
+   *  streaming feeder outgrows 4 GiB within a long soak. */
+  uint64_t pulsebuf_total_bytes;
+  /** True once the ring has been live-streamed since the last data clear:
+   *  stale bytes beyond the retained gap are then garbage, so backtracking
+   *  is refused until a clear. */
+  bool pulsebuf_streamed;
+  /** Serializes the ring mutators (user writes, clears, and the run-start
+   *  scratch-register publish): one-open exclusivity does not bound the
+   *  number of WRITERS when the brokered fd is inherited. Same-task
+   *  lock/unlock only. */
+  struct mutex pulsebuf_lock;
   /** FIFO data structure (uses contiguous array as backing buffer) */
   struct kfifo pulsebuf_fifo;
   /** Step frequency (in Hz) for the current job. */

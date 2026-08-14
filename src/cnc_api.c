@@ -257,6 +257,11 @@ static ssize_t streaming_store(struct device *dev, struct device_attribute *attr
   if (ch != '0' && ch != '1') { return -EINVAL; }
   spin_lock_bh(&self->status_lock);
   self->status.streaming = (ch == '1');
+  if (ch == '1') {
+    /* A live-streamed ring holds stale bytes beyond the retained gap;
+     * backtracking stays refused until the next data clear. */
+    self->pulsebuf_streamed = true;
+  }
   spin_unlock_bh(&self->status_lock);
   return count;
 }
@@ -336,12 +341,23 @@ void cnc_notify_state_changed(struct cnc *self)
 static ssize_t resume_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t count) {
   long long raw_value;
   int32_t value;
+  int64_t magnitude;
   /* For ease of interfacing, allow signed and unsigned 2s complement values. */
   /* (i.e. treat numbers in [2147483648,4294967295] as negative) */
   struct cnc *self = dev_get_drvdata(dev);
   int ret = kstrtoll(buf, 10, &raw_value);
   if (ret) { return ret; }
-  value = raw_value;
+  if (raw_value < -2147483648LL || raw_value > 4294967295LL) {
+    return -EINVAL;
+  }
+  value = (int32_t)raw_value;
+  /* The waypoint counter is a 28-bit field: a larger magnitude would
+   * silently truncate (e.g. 268435457 -> waypoint 1, re-enabling the
+   * laser after ONE step instead of 268M). */
+  magnitude = (value < 0) ? -(int64_t)value : value;
+  if (magnitude >= (1 << 28)) {
+    return -EINVAL;
+  }
   if (value < 0) {
     ret = cnc_backtrack(self, -value);
   } else {

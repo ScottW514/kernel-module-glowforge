@@ -115,13 +115,19 @@ ssize_t cnc_buffer_add_user_data(struct cnc *self, const uint8_t __user *data, s
   }
   spin_unlock_bh(&self->status_lock);
 
+  /* One-open exclusivity does not bound the number of writers: the
+   * brokered fd is inherited, so two processes can write() concurrently.
+   * kfifo is single-producer; serialize the whole mutate-and-publish. */
+  mutex_lock(&self->pulsebuf_lock);
+
   /* read current head value from SDMA */
   ret = cnc_buffer_sync_head(self);
-  if (ret) { return ret; }
+  if (ret) { goto out; }
 
   /* bail if there's not enough room */
   if (kfifo_avail(&self->pulsebuf_fifo) < count+CNC_BUFFER_GAP_SIZE) {
-    return -ENOMEM;
+    ret = -ENOMEM;
+    goto out;
   }
 
   /* copy userspace data into fifo; */
@@ -132,7 +138,8 @@ ssize_t cnc_buffer_add_user_data(struct cnc *self, const uint8_t __user *data, s
      * what the SDMA engine will be told about (scratch5 is only published
      * on full success). */
     self->pulsebuf_fifo.kfifo.in -= copied;
-    return ret ? ret : -ENOMEM;
+    if (!ret) { ret = -ENOMEM; }
+    goto out;
   }
 
   self->pulsebuf_total_bytes += count;
@@ -140,9 +147,14 @@ ssize_t cnc_buffer_add_user_data(struct cnc *self, const uint8_t __user *data, s
   ret = sdma_set_reg(self->sdmac, &self->pulsebuf_fifo.kfifo.in, scratch5);
   if (ret) {
     dev_err(self->dev, "context load failed: %d", ret);
-    return ret;
+    goto out;
   }
+  mutex_unlock(&self->pulsebuf_lock);
   return count;
+
+out:
+  mutex_unlock(&self->pulsebuf_lock);
+  return ret;
 }
 
 
@@ -183,6 +195,7 @@ int cnc_buffer_clear(struct cnc *self, unsigned int flags)
     cleared_context.scratch4 = self->pulsebuf_fifo.kfifo.out;
     cleared_context.scratch5 = self->pulsebuf_fifo.kfifo.in;
     self->pulsebuf_total_bytes = 0;
+    self->pulsebuf_streamed = false;  /* fresh ring: backtrack legal again */
   }
 
   /* convert register numbers (i.e. word offsets) to byte offsets */
@@ -211,8 +224,17 @@ size_t cnc_buffer_get_free_space(struct cnc *self)
 
 uint32_t cnc_buffer_max_backtrack_length(struct cnc *self)
 {
-  return min(self->pulsebuf_total_bytes,
-             kfifo_size(&self->pulsebuf_fifo)-CNC_BUFFER_GAP_SIZE);
+  /* Only the already-played bytes still physically in the ring are
+   * backtrackable: ring size minus the unplayed span [out, in), less the
+   * retained gap - and never more than was ever enqueued. (Bounding by
+   * total_bytes alone assumed the preload model, where total_bytes fits
+   * the ring; a streamed ring holds garbage beyond this bound.) */
+  uint32_t unplayed = self->pulsebuf_fifo.kfifo.in - self->pulsebuf_fifo.kfifo.out;
+  uint32_t intact = kfifo_size(&self->pulsebuf_fifo) - unplayed;
+  uint32_t total = self->pulsebuf_total_bytes > 0xFFFFFFFFULL
+                 ? 0xFFFFFFFFu : (uint32_t)self->pulsebuf_total_bytes;
+  intact = (intact > CNC_BUFFER_GAP_SIZE) ? intact - CNC_BUFFER_GAP_SIZE : 0;
+  return min(total, intact);
 }
 
 uint32_t cnc_buffer_fifo_bitmask(struct cnc *self)
@@ -222,4 +244,8 @@ uint32_t cnc_buffer_fifo_start_phys(struct cnc *self)
 { return self->pulsebuf_phys; }
 
 uint32_t cnc_buffer_total_bytes(struct cnc *self)
-{ return self->pulsebuf_total_bytes; }
+{
+  /* Saturate for the 32-bit position ABI instead of wrapping mid-soak. */
+  return self->pulsebuf_total_bytes > 0xFFFFFFFFULL
+       ? 0xFFFFFFFFu : (uint32_t)self->pulsebuf_total_bytes;
+}

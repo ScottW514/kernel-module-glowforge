@@ -638,6 +638,11 @@ static int cnc_run_with_options(struct cnc *self, struct cnc_run_options opts)
       return ret;
     }
 
+    /* The backtrack clamp, the scratch-register snapshot, and the state
+     * commit below must be consistent against a concurrent writer or
+     * clear on the shared (inheritable) fd. */
+    mutex_lock(&self->pulsebuf_lock);
+
     /* If backtracking, clamp num_steps to ensure we stop before hitting the */
     /* end of valid contiguous data */
     if (opts.backward) {
@@ -648,6 +653,7 @@ static int cnc_run_with_options(struct cnc *self, struct cnc_run_options opts)
         /* is also checked against 0 in cnc_backtrack(). Still, another check */
         /* doesn't hurt. (num_steps cannot be 0 during a backtrack, or else */
         /* we'll never get an interrupt to start deceleration.) */
+        mutex_unlock(&self->pulsebuf_lock);
         return -ENODATA;
       }
     }
@@ -657,18 +663,22 @@ static int cnc_run_with_options(struct cnc *self, struct cnc_run_options opts)
     /* go past the oldest data byte. Wraparound in subtraction is OK. */
     regs[0] /* scratch5 */ =
      (!opts.backward) ? self->pulsebuf_fifo.kfifo.in
-                      : self->pulsebuf_fifo.kfifo.in-self->pulsebuf_total_bytes;
+                      : self->pulsebuf_fifo.kfifo.in
+                        - (uint32_t)self->pulsebuf_total_bytes;
       /* Note when running backward: it would be incorrect to set scratch5 */
       /* to (self->pulsebuf_fifo.kfifo.in-num_steps). When head == tail, */
       /* the DMA engine will come to a dead stop. But when backtracking we */
       /* want to *decelerate* after num_steps, and only come to a dead stop */
-      /* if we run out of room to backtrack. */
+      /* if we run out of room to backtrack. (Backward runs only happen in */
+      /* the preload model - cnc_backtrack refuses a streamed ring - so */
+      /* total_bytes fits 32 bits here.) */
     regs[1] /* scratch6 */ = (!opts.backward) ? 0x00000001 : 0xFFFFFFFF;
     regs[2] /* scratch7 */ = num_steps;
 
     ret = sdma_set_regs(self->sdmac, regs, scratch5, sizeof(regs));
     if (ret) {
       dev_err(self->dev, "failed to set channel context");
+      mutex_unlock(&self->pulsebuf_lock);
       return ret;
     }
 
@@ -739,6 +749,7 @@ static int cnc_run_with_options(struct cnc *self, struct cnc_run_options opts)
       dev_dbg(self->dev, "started.");
     }
     spin_unlock_bh(&self->status_lock);
+    mutex_unlock(&self->pulsebuf_lock);
 
     if (ret == -EPERM) {
       dev_err(self->dev, "attempt to start in fault state");
@@ -767,8 +778,21 @@ int cnc_run(struct cnc *self)
 
 int cnc_backtrack(struct cnc *self, uint32_t num_steps)
 {
+  bool streamed;
   if (num_steps == 0) {
     return -EINVAL;
+  }
+  /* A live-streamed ring holds stale bytes beyond the retained gap:
+   * walking backward over them replays garbage steps (the script forces
+   * the laser off backward, but X/Y/Z from garbage is a gantry crash).
+   * Backtracking is a preload-model operation; refuse it until the next
+   * data clear. */
+  spin_lock_bh(&self->status_lock);
+  streamed = self->status.streaming || self->pulsebuf_streamed;
+  spin_unlock_bh(&self->status_lock);
+  if (streamed) {
+    dev_err(self->dev, "backtrack refused: ring was live-streamed");
+    return -EPERM;
   }
   /* Run backward, with acceleration, deceleration, and waypoint interrupt. */
   /* (Waypoint interrupt starts deceleration after num_steps.) */
@@ -909,12 +933,23 @@ int cnc_disable(struct cnc *self)
  * Idle: do nothing
  * Running: error
  * Disabled: enable steppers
- * Fault: error (TODO)
+ * Fault: recover to idle, but only once every (non-ignored) fault line
+ *        has physically cleared
  */
 int cnc_enable(struct cnc *self)
 {
   int ret = 0;
   bool need_power_on = false;
+  int i;
+  unsigned long live_faults = 0;
+
+  /* Live fault-line snapshot (active low) for the recovery gate below. */
+  for (i = 0; i < NUM_STEPPER_FAULT_SIGNALS; i++) {
+    if (gpio_get_value(self->gpios[stepper_fault_gpios[i]]) == 0) {
+      live_faults |= (1 << i);
+    }
+  }
+
   spin_lock_bh(&self->status_lock);
   switch (self->status.state) {
     case STATE_DISABLED:
@@ -922,6 +957,20 @@ int cnc_enable(struct cnc *self)
         dev_err(self->dev, "driver(s) in fault state; not powering on");
         ret = -EPERM;
       } else {
+        need_power_on = true;
+      }
+      break;
+    case STATE_FAULT:
+      /* The documented fault -> idle recovery: an explicit enable is the
+       * operator's deliberate lever, so a single edge glitch does not
+       * brick motion until module reload - but a line that still reads
+       * asserted refuses, so a genuinely faulted driver is never
+       * cleared blind. */
+      if (live_faults & ~self->ignored_faults) {
+        dev_err(self->dev, "fault line(s) still asserted; not recovering");
+        ret = -EPERM;
+      } else {
+        self->status.triggered_faults = 0;
         need_power_on = true;
       }
       break;
@@ -943,7 +992,8 @@ int cnc_enable(struct cnc *self)
   spin_lock_bh(&self->status_lock);
   if (self->status.triggered_faults & fatal_fault_conditions) {
     ret = -EPERM;
-  } else if (self->status.state == STATE_DISABLED) {
+  } else if (self->status.state == STATE_DISABLED ||
+             self->status.state == STATE_FAULT) {
     self->status.state = STATE_IDLE;
     cnc_notify_state_changed(self);
   }
@@ -1015,6 +1065,11 @@ int cnc_clear_pulse_data(struct cnc *self, enum cnc_lseek_options opts)
       return -EINVAL;
   }
 
+  /* The state check and the reset must be one atomic unit against a run
+   * start (cnc_run_with_options holds the same lock through its state
+   * commit), or a run raced in between them and the reset yanks the
+   * fifo out from under a playing engine. */
+  mutex_lock(&self->pulsebuf_lock);
   spin_lock_bh(&self->status_lock);
   switch (self->status.state) {
     case STATE_RUNNING:
@@ -1026,9 +1081,11 @@ int cnc_clear_pulse_data(struct cnc *self, enum cnc_lseek_options opts)
   spin_unlock_bh(&self->status_lock);
 
   /* don't touch the context if we're returning an error */
-  if (ret) { return ret; }
-
-  return cnc_buffer_clear(self, clear_flags);
+  if (!ret) {
+    ret = cnc_buffer_clear(self, clear_flags);
+  }
+  mutex_unlock(&self->pulsebuf_lock);
+  return ret;
 }
 
 
@@ -1494,6 +1551,7 @@ int cnc_probe(struct platform_device *pdev)
   self->dev = &pdev->dev;
 
   spin_lock_init(&self->status_lock);
+  mutex_init(&self->pulsebuf_lock);
   tasklet_init(&self->fault_tasklet, fault_tasklet_fn, (unsigned long)self);
   cnc_set_step_frequency(self, STEP_FREQUENCY_DEFAULT);
   cnc_set_ramp_rate_hz_per_s(self, RAMP_RATE_DEFAULT_HZ_PER_S);
