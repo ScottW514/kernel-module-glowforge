@@ -140,7 +140,7 @@ void io_change_pins(int *gpios, size_t ngpios, const struct pin_change_set *chan
   const struct pin_change *changes = change_set->changes;
   for (i = 0; i < change_set->len; i++) {
     pin_id pid = changes[i].pid;
-    if (likely(pid >= 0 && pid <= ngpios)) {
+    if (likely(pid >= 0 && pid < ngpios)) {
       u8 value = changes[i].value;
       if (likely(value != HI_Z)) {
         gpio_direction_output(gpios[pid], value);

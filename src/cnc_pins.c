@@ -66,6 +66,9 @@ const struct pin_config pin_configs[NUM_GPIO_PINS] = {
 };
 
 
+/* Every pin the SDMA script drives, including the informative head-side
+ * laser signal - the set feeds the bank-address verification, so an
+ * omission would leave that pin's bank unchecked. */
 const pin_set cnc_sdma_pin_set =
   (1ULL << PIN_X_STEP)  |
   (1ULL << PIN_X_DIR)   |
@@ -75,7 +78,8 @@ const pin_set cnc_sdma_pin_set =
   (1ULL << PIN_Y2_DIR)  |
   (1ULL << PIN_Z_STEP)  |
   (1ULL << PIN_Z_DIR)   |
-  (1ULL << PIN_LASER_ON);
+  (1ULL << PIN_LASER_ON) |
+  (1ULL << PIN_LASER_ON_HEAD);
 
 
 /** Pin changes to apply after initialization, or when reenabling the driver. */
@@ -104,6 +108,7 @@ DEFINE_PIN_CHANGE_SET(cnc_startup_pin_changes,
  */
 DEFINE_PIN_CHANGE_SET(cnc_stop_pin_changes,
   {PIN_LASER_ON, HI_Z},
+  {PIN_LASER_ON_HEAD, 0},
   {PIN_CHARGE_PUMP, 0},
   {PIN_X_STEP, 0},
   {PIN_X_DIR, 0},
@@ -129,6 +134,7 @@ DEFINE_PIN_CHANGE_SET(cnc_shutdown_pin_changes,
   {PIN_Y2_ENABLE, 1}, /* active low */
   {PIN_Z_ENABLE, 0}, /* active high */
   {PIN_LASER_ON, HI_Z},
+  {PIN_LASER_ON_HEAD, 0},
   {PIN_CHARGE_PUMP, 0},
   {PIN_X_STEP, 0},
   {PIN_X_DIR, 0},

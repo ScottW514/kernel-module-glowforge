@@ -119,13 +119,17 @@ static fixed epsilon = FIXED(0, 0.0625);
 struct ledtrig_smooth_data {
   struct timer_list timer;
   struct led_classdev *led_cdev;
-  
+  /* Serializes the simulation step and parameter writes: timestep runs
+   * from the timer (softirq) and from four store handlers (process
+   * context) against the same state. */
+  spinlock_t lock;
+
   /* Parameters */
   fixed target;
   fixed c; /* damping constant; spring constant is derived */
   int pulse_on_count; /* multiples of MSECS_PER_UPDATE */
   int pulse_off_count; /* multiples of MSECS_PER_UPDATE */
-  
+
   /* Simulation state */
   fixed value;
   fixed velocity;
@@ -170,7 +174,8 @@ static bool set_pulse_periods(struct ledtrig_smooth_data *data, int on, int off)
 }
 
 
-static void timestep(struct led_classdev *led_cdev)
+/* Must be called with data->lock held. */
+static void timestep_locked(struct led_classdev *led_cdev)
 {
   struct ledtrig_smooth_data *data = led_get_trigger_data(led_cdev);
   bool pulsing = update_pulser(data);
@@ -220,6 +225,15 @@ static void timestep(struct led_classdev *led_cdev)
 }
 
 
+static void timestep(struct led_classdev *led_cdev)
+{
+  struct ledtrig_smooth_data *data = led_get_trigger_data(led_cdev);
+  spin_lock_bh(&data->lock);
+  timestep_locked(led_cdev);
+  spin_unlock_bh(&data->lock);
+}
+
+
 static fixed value_from_raw_brightness(int raw_brightness)
 {
   /* Binary search to find the index of the given 10-bit brightness value, or */
@@ -258,8 +272,10 @@ static ssize_t target_store(struct device *dev, struct device_attribute *attr, c
   ssize_t ret = kstrtoul(buf, 10, &new_target);
   if (ret) { return ret; }
   if (new_target > 255) { return -EINVAL; }
+  spin_lock_bh(&data->lock);
   data->target = FIXED_INT(new_target);
-  timestep(led_cdev); /* wake up the simulation */
+  timestep_locked(led_cdev); /* wake up the simulation */
+  spin_unlock_bh(&data->lock);
   return size;
 }
 
@@ -291,8 +307,10 @@ static ssize_t speed_store(struct device *dev, struct device_attribute *attr, co
   ssize_t ret = kstrtoul(buf, 10, &new_speed);
   if (ret) { return ret; }
   if (new_speed == 0 || new_speed > SPEED_MAX) { return -EINVAL; }
+  spin_lock_bh(&data->lock);
   data->c.intval = new_speed << (FRAC_BITS-SPEED_C_SHIFT);
-  timestep(led_cdev); /* wake up the simulation */
+  timestep_locked(led_cdev); /* wake up the simulation */
+  spin_unlock_bh(&data->lock);
   return size;
 }
 
@@ -312,9 +330,11 @@ static ssize_t pulse_on_store(struct device *dev, struct device_attribute *attr,
   unsigned long new_on;
   ssize_t ret = kstrtoul(buf, 10, &new_on);
   if (ret) { return ret; }
+  spin_lock_bh(&data->lock);
   if (set_pulse_periods(data, new_on/MSECS_PER_UPDATE, data->pulse_off_count)) {
-    timestep(led_cdev);
+    timestep_locked(led_cdev);
   }
+  spin_unlock_bh(&data->lock);
   return size;
 }
 
@@ -334,9 +354,11 @@ static ssize_t pulse_off_store(struct device *dev, struct device_attribute *attr
   unsigned long new_off;
   ssize_t ret = kstrtoul(buf, 10, &new_off);
   if (ret) { return ret; }
+  spin_lock_bh(&data->lock);
   if (set_pulse_periods(data, data->pulse_on_count, new_off/MSECS_PER_UPDATE)) {
-    timestep(led_cdev);
+    timestep_locked(led_cdev);
   }
+  spin_unlock_bh(&data->lock);
   return size;
 }
 
@@ -382,6 +404,7 @@ static int smooth_activate(struct led_classdev *led_cdev)
   data->target = data->value;
   data->c = FIXED_INT(16);
   data->led_cdev = led_cdev;
+  spin_lock_init(&data->lock);
   led_set_trigger_data(led_cdev, data);
   timer_setup(&data->timer, smooth_timer_cb, 0);
   return 0;
@@ -396,8 +419,11 @@ static void smooth_deactivate(struct led_classdev *led_cdev)
 {
   struct ledtrig_smooth_data *data = led_get_trigger_data(led_cdev);
   if (data) {
-    timer_delete_sync(&data->timer);
+    /* Remove the attributes FIRST (this drains in-flight store
+     * handlers), so no store can mod_timer() after the sync delete
+     * and fire the timer on freed data. */
     sysfs_remove_group(&led_cdev->dev->kobj, &smooth_attr_group);
+    timer_delete_sync(&data->timer);
     led_set_trigger_data(led_cdev, NULL);
     kfree(data);
   }

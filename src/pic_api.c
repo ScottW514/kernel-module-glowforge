@@ -47,6 +47,11 @@ static ssize_t pic_write_register_ascii(struct device *dev, enum pic_register re
   if (sscanf(buf, "%hu", &new_value) != 1) {
     return -EINVAL;
   }
+  /* Every writable single register is a 10-bit DAC/PWM value (0-1023
+   * per the UAPI); reject instead of silently wrapping through %hu. */
+  if (new_value > 0x03ff) {
+    return -EINVAL;
+  }
   ret = pic_write_one_register(spi, reg, new_value);
   return (ret >= 0) ? count : ret;
 }

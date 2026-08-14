@@ -212,8 +212,12 @@ static irqreturn_t tach_irq_handler(unsigned int irq, void *dev_id)
   struct tach_channel *tach = (struct tach_channel *)dev_id;
   ktime_t now = ktime_get();
 
+  /* The reader (tach attribute show, irqsave) and this handler share
+   * two 64-bit fields; unlocked writes tear on a 32-bit machine. */
+  spin_lock(&tach->lock);
   tach->last_period = ktime_sub(now, tach->last_edge);
   tach->last_edge = now;
+  spin_unlock(&tach->lock);
 
   return IRQ_HANDLED;
 }
@@ -223,7 +227,8 @@ static irqreturn_t tach_irq_handler(unsigned int irq, void *dev_id)
 #pragma mark - Probe/remove
 
 /**
- * Teardown tachs, unregistering IRQs
+ * Teardown tachs, unregistering IRQs. Idempotent: frees only the IRQs
+ * that were actually requested and marks them freed.
  */
 static void thermal_teardown_tachs(struct thermal *self)
 {
@@ -233,20 +238,24 @@ static void thermal_teardown_tachs(struct thermal *self)
       struct tach_channel *tach = &self->tachs[tach_num];
       disable_irq(tach->irq_num);
       free_irq(tach->irq_num, (void *)tach);
+      tach->irq_num = -1;
     }
   }
 }
 
 /**
- * Initialize tach structures, setting interrupt handlers
+ * Initialize tach structures, setting interrupt handlers. Cleans up
+ * after itself on failure: no live handler is ever left registered
+ * against the (devm-freed on probe failure) driver data, and irq_num
+ * only records IRQs that were actually requested.
  */
 static int thermal_init_tachs(struct thermal *self)
 {
-  int err = 0;
   int tach_num;
   /* init tachs struct to safe values */
   for (tach_num = 0; tach_num < THERMAL_NUM_TACH_SIGNALS; tach_num++) {
     self->tachs[tach_num].irq_num = -1;
+    spin_lock_init(&self->tachs[tach_num].lock);
   }
   /* allocate interrupts */
   for (tach_num = 0; tach_num < THERMAL_NUM_TACH_SIGNALS; tach_num++) {
@@ -254,29 +263,30 @@ static int thermal_init_tachs(struct thermal *self)
     int gpio = self->gpios[pin_id];
     int irq_num = gpio_to_irq(gpio);
     struct tach_channel *tach = &self->tachs[tach_num];
-    int irq;
+    int ret;
     const struct pin_config *pin = &thermal_pin_configs[pin_id];
 
     tach->last_period = ktime_set(0,0);
 
     if (unlikely(irq_num < 0)) {
       pr_err("no IRQ for GPIO pin \"%s\": %d\n", pin->name, irq_num);
-      err = -ENOENT;
-      goto error;
+      thermal_teardown_tachs(self);
+      return -ENOENT;
     }
 
-    tach->irq_num = irq_num;
-    irq = request_irq(irq_num, (irq_handler_t)tach_irq_handler,
+    ret = request_irq(irq_num, (irq_handler_t)tach_irq_handler,
         IRQF_TRIGGER_RISING, pin->name, (void*)tach);
-    if (unlikely(irq < 0)) {
-      pr_err("no IRQ for IRQ number %d: %d\n", irq_num, irq);
-      err = -ENOENT;
-      goto error;
+    if (unlikely(ret < 0)) {
+      pr_err("request_irq(%d) failed: %d\n", irq_num, ret);
+      thermal_teardown_tachs(self);
+      return -ENOENT;
     }
+    /* Recorded only after the request succeeded, so teardown never
+     * frees a never-requested IRQ. */
+    tach->irq_num = irq_num;
   }
 
-error:
-  return err;
+  return 0;
 }
 
 

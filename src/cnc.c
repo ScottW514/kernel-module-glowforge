@@ -1468,10 +1468,11 @@ static int cnc_register_fault_irqs(struct cnc *self)
     initial_fault_state |= ((gpio_get_value(self->gpios[pin_id]) == 0) << i);
   }
 
-  /* Are we initially in a fault state? */
+  /* Are we initially in a fault state? Judge on the MASKED value: an
+   * ignored fault line must not seed STATE_FAULT. */
   spin_lock_bh(&self->status_lock);
   self->status.triggered_faults = initial_fault_state & (~self->ignored_faults);
-  if (initial_fault_state) {
+  if (self->status.triggered_faults) {
     self->status.state = STATE_FAULT;
   }
   spin_unlock_bh(&self->status_lock);
@@ -1687,17 +1688,6 @@ int cnc_probe(struct platform_device *pdev)
 
   platform_set_drvdata(pdev, self);
 
-  /* Create /dev/glowforge */
-  self->pulsedev.minor = MISC_DYNAMIC_MINOR;
-  self->pulsedev.name = PULSE_DEVICE_NAME;
-  self->pulsedev.fops = &pulsedev_fops;
-  self->pulsedev.parent = &pdev->dev;
-  ret = misc_register(&self->pulsedev);
-  if (ret) {
-    dev_err(&pdev->dev, "unable to register " PULSE_DEVICE_PATH);
-    goto failed_pulsedev_register;
-  }
-
   /* Acquire the 40V supply (the DT cnc node must carry 40v-supply).
    * PTR_ERR propagation matters: -EPROBE_DEFER must reach the driver core. */
   self->supply_40v = devm_regulator_get_exclusive(&pdev->dev, "40v");
@@ -1707,7 +1697,7 @@ int cnc_probe(struct platform_device *pdev)
     goto failed_regulator_get;
   }
 
-  /* Register fault interrupt handlers */
+  /* Register fault interrupt handlers (devm-managed) */
   ret = cnc_register_fault_irqs(self);
   if (ret) {
     goto failed_register_fault_irqs;
@@ -1722,13 +1712,26 @@ int cnc_probe(struct platform_device *pdev)
   self->state_attr_node = sysfs_get_dirent(pdev->dev.kobj.sd, STR(ATTR_STATE));
   if (!self->state_attr_node) {
     ret = dev_err_probe(&pdev->dev, -ENODEV, "could not get node for state attribute");
-    goto failed_create_link;
+    goto failed_get_dirent;
   }
 
   /* Add a link in /sys/glowforge */
   ret = sysfs_create_link(glowforge_kobj, &pdev->dev.kobj, CNC_GROUP_NAME);
   if (ret) {
     goto failed_create_link;
+  }
+
+  /* Create /dev/glowforge LAST: the device becomes visible to userspace
+   * only once everything behind it (regulator, IRQs, sysfs) is up, so
+   * the unwind can never deregister a device someone already opened. */
+  self->pulsedev.minor = MISC_DYNAMIC_MINOR;
+  self->pulsedev.name = PULSE_DEVICE_NAME;
+  self->pulsedev.fops = &pulsedev_fops;
+  self->pulsedev.parent = &pdev->dev;
+  ret = misc_register(&self->pulsedev);
+  if (ret) {
+    dev_err(&pdev->dev, "unable to register " PULSE_DEVICE_PATH);
+    goto failed_pulsedev_register;
   }
 
 #if !INITIAL_STATE_DISABLED
@@ -1748,16 +1751,28 @@ int cnc_probe(struct platform_device *pdev)
   dev_info(&pdev->dev, "%s: done", __func__);
   return 0;
 
+failed_pulsedev_register:
   sysfs_remove_link(glowforge_kobj, CNC_GROUP_NAME);
 failed_create_link:
+  {
+    /* NULL first: a fault IRQ's tasklet can call
+     * cnc_notify_state_changed concurrently. */
+    struct kernfs_node *state_node = self->state_attr_node;
+    self->state_attr_node = NULL;
+    sysfs_put(state_node);
+  }
+failed_get_dirent:
   sysfs_remove_group(&pdev->dev.kobj, &cnc_attr_group);
 failed_create_group:
 failed_register_fault_irqs:
 failed_regulator_get:
-  misc_deregister(&self->pulsedev);
-failed_pulsedev_register:
 failed_load_sdma_script:
 failed_sdma_init:
+  /* The channel must never keep a callback into this (devm-freed on
+   * probe failure) driver data - e.g. across an -EPROBE_DEFER cycle. */
+  if (self->sdmac) {
+    sdma_set_channel_interrupt_callback(self->sdmac, NULL, NULL);
+  }
   epit_stop(self->epit);
 failed_epit_init:
   io_release_pwms(&self->laser_pwm, 1);
@@ -1774,9 +1789,25 @@ failed_buffer_init:
 void cnc_remove(struct platform_device *pdev)
 {
   struct cnc *self = platform_get_drvdata(pdev);
+  struct kernfs_node *state_node;
   if (!cnc_enabled) { return; }
   if (!self) { return; } /* probe never set drvdata (failed early) */
   dev_info(&pdev->dev, "%s: started", __func__);
+  /* Remove every userspace surface FIRST, so no open() and no attribute
+   * access can race the hardware teardown below (a concurrent cat used
+   * to reach gpio_get_value on freed descriptors).
+   * The link lives on the shared /sys/glowforge kobject, not the
+   * device's; removing it from the wrong kobject left a stale link that
+   * made every rebind fail with -EEXIST. */
+  misc_deregister(&self->pulsedev);
+  sysfs_remove_link(glowforge_kobj, CNC_GROUP_NAME);
+  sysfs_remove_group(&pdev->dev.kobj, &cnc_attr_group);
+  /* NULL first: the fault tasklet can call cnc_notify_state_changed
+   * concurrently; then drop the dirent reference instead of leaking it. */
+  state_node = self->state_attr_node;
+  self->state_attr_node = NULL;
+  sysfs_put(state_node);
+  /* Stop the engine and its timers. */
   epit_stop(self->epit);
   sdma_set_channel_interrupt_callback(self->sdmac, NULL, NULL);
   hrtimer_cancel(&self->ramp_timer);
@@ -1785,16 +1816,10 @@ void cnc_remove(struct platform_device *pdev)
 #if INSTALL_PANIC_HANDLER
   atomic_notifier_chain_unregister(&panic_notifier_list, &self->panic_notifier);
 #endif
+  /* Only now release the hardware. */
   io_release_pwms(&self->laser_pwm, 1);
   stepper_power_off(self);
   io_release_gpios(self->gpios, NUM_GPIO_PINS);
-  self->state_attr_node = NULL;
-  /* the link lives on the shared /sys/glowforge kobject, not the device's;
-   * removing it from the wrong kobject left a stale link that made every
-   * rebind fail with -EEXIST */
-  sysfs_remove_link(glowforge_kobj, CNC_GROUP_NAME);
-  sysfs_remove_group(&pdev->dev.kobj, &cnc_attr_group);
-  misc_deregister(&self->pulsedev);
   cnc_buffer_destroy(self);
   of_reserved_mem_device_release(self->dev);
   tasklet_kill(&self->fault_tasklet);

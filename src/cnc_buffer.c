@@ -208,7 +208,11 @@ int cnc_buffer_clear(struct cnc *self, unsigned int flags)
 /* may sleep */
 int cnc_buffer_is_empty(struct cnc *self)
 {
-  cnc_buffer_sync_head(self);
+  /* A failed head fetch must not let the run-start "no data" gate
+   * decide on a stale index: report empty, which refuses the run. */
+  if (cnc_buffer_sync_head(self)) {
+    return 1;
+  }
   return kfifo_is_empty(&self->pulsebuf_fifo);
 }
 

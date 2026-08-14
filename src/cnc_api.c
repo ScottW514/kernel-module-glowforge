@@ -60,7 +60,11 @@ static int pulsedev_close(struct inode *inode, struct file *filp)
     (self->deadman_switch_active) ? "active" : "inactive");
   if (self->deadman_switch_active && st == STATE_RUNNING) {
     dev_warn(dev, PULSE_DEVICE_PATH " closed while locked and driver is running! Emergency stop.");
-    cnc_disable(self);
+    /* Halt, not disable: dropping the 40 V rail is exactly the fast
+     * off/on bounce that can wedge the stepper drivers, and crash
+     * recovery must not be left in the state most likely to need the
+     * rail-off ladder. The latch relock below covers the beam. */
+    cnc_halt(self);
     dms_notifier_call_chain(&dms_notifier_list, 0, NULL);
   }
   cnc_set_laser_latch(self, 1); /* lock laser on close */
@@ -190,6 +194,9 @@ static ssize_t ignored_faults_store(struct device *dev, struct device_attribute 
   unsigned long new_mask;
   int ret = kstrtoul(buf, 10, &new_mask);
   if (ret) { return ret; }
+  /* Three fault bits exist; anything wider would silently disable all
+   * stepper-fault handling (the UAPI documents 0-7). */
+  if (new_mask > 7) { return -EINVAL; }
   self->ignored_faults = new_mask;
   return count;
 }
