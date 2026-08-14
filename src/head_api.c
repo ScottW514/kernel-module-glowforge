@@ -45,22 +45,20 @@ static ssize_t head_write_bit_ascii(struct device *dev, int reg, int bit, int va
 static ssize_t head_read_bit_ascii(struct device *dev, int reg, int bit, char *buf)
 {
   struct i2c_client *client = to_i2c_client(dev);
-  ssize_t value = head_read_i2c_byte(client, reg);
-  if (value >= 0)
-    return scnprintf(buf, PAGE_SIZE, "%d\n", (value & bit) ? 1 : 0);
-  else
+  int value = head_read_i2c_byte(client, reg);
+  if (value < 0)
     return value;
+  return scnprintf(buf, PAGE_SIZE, "%d\n", (value & bit) ? 1 : 0);
 }
 
 
 static ssize_t head_read_dword_ascii(struct device *dev, int reg, char *buf)
 {
   struct i2c_client *client = to_i2c_client(dev);
-  uint16_t value = head_read_i2c_word(client, reg);
-  if (value >= 0)
-    return scnprintf(buf, PAGE_SIZE, "%hu\n", value);
-  else
+  int value = head_read_i2c_word(client, reg);
+  if (value < 0)
     return value;
+  return scnprintf(buf, PAGE_SIZE, "%d\n", value);
 }
 
 
@@ -87,9 +85,8 @@ static ssize_t head_write_dword_ascii(struct device *dev, int reg, const char *b
 static ssize_t info_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
   struct i2c_client *client = to_i2c_client(dev);
-  uint16_t id;
-  uint8_t v1, v2, v3, v4, reg5, reg6;
-  uint32_t serial_lsb, serial_msb;
+  int id, v1, v2, v3, v4, reg5, reg6, serial_lsb, serial_msb;
+  uint32_t serial;
 
   id = head_read_i2c_word(client, HEAD_REG_ID);
   if (id < 0)
@@ -99,23 +96,23 @@ static ssize_t info_show(struct device *dev, struct device_attribute *attr, char
   v2 = head_read_i2c_byte(client, HEAD_REG_VER_2);
   v3 = head_read_i2c_byte(client, HEAD_REG_VER_3);
   v4 = head_read_i2c_byte(client, HEAD_REG_VER_4);
-  if ((v1 < 0) | (v2 < 0) | (v3 < 0) | (v4 < 0))
+  if (v1 < 0 || v2 < 0 || v3 < 0 || v4 < 0)
     return -EIO;
 
-  serial_lsb = (uint32_t)head_read_i2c_word(client, HEAD_REG_SER_LSB);
-  serial_msb = (uint32_t)head_read_i2c_word(client, HEAD_REG_SER_MSB);
-  if ((serial_lsb < 0) | (serial_msb < 0))
+  serial_lsb = head_read_i2c_word(client, HEAD_REG_SER_LSB);
+  serial_msb = head_read_i2c_word(client, HEAD_REG_SER_MSB);
+  if (serial_lsb < 0 || serial_msb < 0)
     return -EIO;
-  serial_lsb = serial_lsb | (serial_msb << 16);
+  serial = (uint32_t)serial_lsb | ((uint32_t)serial_msb << 16);
 
   reg5 = head_read_i2c_byte(client, HEAD_REG_RO_GRP);
   reg6 = head_read_i2c_byte(client, HEAD_REG_RW_GRP);
-  if ((reg5 < 0) | (reg6 < 0))
+  if (reg5 < 0 || reg6 < 0)
     return -EIO;
 
   return scnprintf(buf, PAGE_SIZE,
-    "id=%04x\nserial=%d\nversion=%02x%02x%02x%02x\nreg5=%c%c%c%c%c%c%c%c\nreg6=%c%c%c%c%c%c%c%c\n",
-    id, serial_lsb, v1, v2, v3, v4, BYTE_TO_BINARY(reg5), BYTE_TO_BINARY(reg6));
+    "id=%04x\nserial=%u\nversion=%02x%02x%02x%02x\nreg5=%c%c%c%c%c%c%c%c\nreg6=%c%c%c%c%c%c%c%c\n",
+    id, serial, v1, v2, v3, v4, BYTE_TO_BINARY(reg5), BYTE_TO_BINARY(reg6));
 }
 static DEVICE_ATTR(info, S_IRUSR, info_show, NULL);
 

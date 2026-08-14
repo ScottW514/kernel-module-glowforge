@@ -30,10 +30,15 @@ extern struct kobject *glowforge_kobj;
 extern int head_enabled;
 
 
-uint8_t head_read_i2c_byte(struct i2c_client *client, int reg)
+/* Read helpers return the (non-negative) register value or a negative
+ * errno. Truncating to the register width here would turn -EIO into a
+ * plausible reading - and these registers include the beam detector and
+ * the accelerometer flag, where a failed read must never look like a
+ * strong positive. */
+int head_read_i2c_byte(struct i2c_client *client, int reg)
 {
   struct head_data *self = i2c_get_clientdata(client);
-  uint8_t ret;
+  int ret;
   mutex_lock(&self->lock);
   ret = i2c_smbus_read_byte_data(client, reg);
   mutex_unlock(&self->lock);
@@ -41,10 +46,10 @@ uint8_t head_read_i2c_byte(struct i2c_client *client, int reg)
 }
 
 
-uint16_t head_read_i2c_word(struct i2c_client *client, int reg)
+int head_read_i2c_word(struct i2c_client *client, int reg)
 {
   struct head_data *self = i2c_get_clientdata(client);
-  uint16_t ret;
+  int ret;
   mutex_lock(&self->lock);
   ret = i2c_smbus_read_word_data(client, reg);
   mutex_unlock(&self->lock);

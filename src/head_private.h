@@ -84,8 +84,9 @@ struct head_data {
 
 extern const struct attribute_group head_attr_group;
 
-uint8_t head_read_i2c_byte(struct i2c_client *client, int reg);
-uint16_t head_read_i2c_word(struct i2c_client *client, int reg);
+/* Return the register value, or a negative errno on a failed read. */
+int head_read_i2c_byte(struct i2c_client *client, int reg);
+int head_read_i2c_word(struct i2c_client *client, int reg);
 int head_write_i2c_byte(struct i2c_client *client, int reg, uint8_t new_value);
 int head_write_i2c_word(struct i2c_client *client, int reg, uint16_t new_value);
 
