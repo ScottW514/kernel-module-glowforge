@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /**
  * Glowforge kernel module
  *
@@ -40,6 +41,7 @@
 #include "uapi/glowforge.h"
 
 MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Scott Wiederhold <s.e.wiederhold@gmail.com>");
 MODULE_AUTHOR("Glowforge, Inc. <opensource@glowforge.com>");
 MODULE_DESCRIPTION("Glowforge Driver");
 MODULE_VERSION("dev");

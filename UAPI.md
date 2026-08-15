@@ -4,10 +4,8 @@ This work is licensed under a Creative Commons Attribution-ShareAlike 4.0 Intern
 
 This documentation is provided as is without warranty of any kind.  Use at your own risk.
 ### Overview
-This module provides an interface to the Glowforge brand CNC laser hardware, supporting the current production Basic, Plus, and Pro models (as of March 2020).  
-NOTE: This is an OpenGlow Fork of [https://github.com/Glowforge/kernel-module-glowforge](https://github.com/Glowforge/kernel-module-glowforge).  
-There are differences between the OpenGlow implementation and the Glowforge original.  
-This documentation only applies to the OpenGlow fork.  
+This module provides an interface to the Glowforge brand CNC laser hardware (the Basic, Plus, and Pro models on the factory i.MX6 control board).  
+It is the OpenGlow fork of [https://github.com/Glowforge/kernel-module-glowforge](https://github.com/Glowforge/kernel-module-glowforge) and differs from the Glowforge original; this documentation applies to the OpenGlow fork only.  
 
 #### Build assumptions
 The target is the factory i.MX6 Solo control board, which is **uniprocessor**, and the
@@ -37,6 +35,7 @@ aborted cut are wanted, and a pump stop/start cycle can airlock the loop.
     |---disable:             (WO) Stop all motion and turn off stepper motors and laser
     |---enable:              (WO) Power on steppers and make ready for run
     |---faults:              (RO) Status of stepper axis faults
+    |---free:                (RO) Free ring space in bytes (advisory; see the feeder contract)
     |---halt:                (WO) Immediately stop running program (no deceleration)
     |---ignored_faults:      (RW) Stepper axis faults to ignore      
     |---interlock_circuit:   (RO) Safety-chain GPIO snapshot (bitmask)
@@ -56,6 +55,8 @@ aborted cut are wanted, and a pump stop/start cycle can airlock the loop.
     |---state:               (RO) Current operating state
     |---step_freq:           (RW) Step frequency
     |---stop:                (WO) Controlled stop of running program (decelerate to idle)
+    |---streaming:           (RW) Live-feed mode: end-of-data mid-run is an underrun, not completion
+    |---underruns:           (RO) Streaming underruns since module load
     |---x_decay:             (RW) Enable/Disable X-Axis decay
     |---x_mode:              (RW) X-Axis Micro-stepping mode
     |---y_decay:             (RW) Enable/Disable Y-Axis decay
@@ -157,7 +158,7 @@ Bits: 0: X Axis, 1: Y1 Axis, 2: Y2 Axis
 
 ##### free
 Read, ASCII, bytes  
-Free space in the pulse ring (already net of the reserved 32 KiB backtrack gap): the largest write that will currently succeed. Each read performs SDMA channel-0 transactions - do not poll it for pacing (see the feeder contract under ```/dev/glowforge```).
+Free space in the pulse ring (already net of the reserved 32 KiB backtrack gap): the largest write that will currently succeed. This is a diagnostic/advisory readback, not the backpressure primitive: a feeder paces by wall clock and takes the write's -ENOMEM return as the back-off signal (see the feeder contract under ```/dev/glowforge```). Each read performs SDMA channel-0 transactions - do not poll it for pacing.
 
 ##### halt
 Write, ASCII, 1  
@@ -180,7 +181,7 @@ Bits 1, 3 and 4 are driven outputs: mainline gpio-mxc reads output lines back fr
 
 ##### interlock_latch_reset
 Read, ASCII, 0-1  
-State of the interlock latch-reset line (a driven output, initialised low; read back from the data register, i.e. the value last driven).  
+State of the interlock latch-reset line (a driven output, initialized low; read back from the data register, i.e. the value last driven).  
 
 ##### laser_enable
 Read, ASCII, 0-1  
@@ -219,9 +220,11 @@ Bytes: Value
 00-03: X position in steps  
 04-07: Y position in steps  
 08-11: Z position in steps  
-12-15: Program bytes processed  
-16-19: Program size in bytes (saturates at 4 GiB under a long live stream)  
+12-15: Program bytes processed (a 32-bit SDMA counter: wraps modulo 4 GiB under a long live stream)  
+16-19: Program size in bytes (a 64-bit host tally, saturates at 4 GiB under a long live stream)  
 20-31: Reserved  
+
+Under a live feed the two byte counters diverge past 4 GiB (one wraps, one saturates); a controller that compares them for progress must track the wrap itself, or use its own count of bytes written.  
 
 ##### ramp_rate
 Read/Write, ASCII, 10000-500000  
@@ -301,7 +304,7 @@ Microstepping mode for Y Axis.  1 = Full steps
 ##### z_step
 Write, ASCII, 0-1  
 Moves Z-Axis one step in requested direction (direct GPIO pulse, not via the pulse stream).  
-0: Negative, towards bed  
+0: Negative, toward bed  
 1: Positive, away from bed  
 
 ---
@@ -337,7 +340,7 @@ Read, ASCII, 0-1
 Output from lens home position sensor.  
 0: Not at home position  
 1: At home position  
-This changes to 1 when the lens is at or above a specific positive position.  This position varies from unit to unit.  To adjust for this, Glowforge sends a "hunt" program to the device that tells it how many steps towards the bed to move to reach the 0 focus level.  
+This changes to 1 when the lens is at or above a specific positive position.  This position varies from unit to unit.  To adjust for this, Glowforge sends a "hunt" program to the device that tells it how many steps toward the bed to move to reach the 0 focus level.  
 
 ##### measure_laser
 Read/Write, ASCII, 0-1023  

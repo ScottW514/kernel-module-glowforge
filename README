@@ -15,3 +15,13 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License along
 with this program; if not, write to the Free Software Foundation, Inc.,
 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+
+Third-party components
+----------------------
+tools/sdma_asm.pl and tools/mx51_sdma_set.pm (the SDMA script assembler that
+turns asm/sdma.asm into src/sdma.asm.h at build time) are by Eli Billauer,
+(c) 2011, http://billauer.co.il, licensed GPL-2.0-or-later; their headers are
+retained unchanged.
+
+Every file under src/ carries an SPDX-License-Identifier line
+(GPL-2.0-or-later); LICENSE holds the GPL version 2 text.
