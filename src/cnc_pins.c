@@ -61,9 +61,12 @@ const struct pin_config pin_configs[NUM_GPIO_PINS] = {
   [PIN_LASER_ON_READBACK]     = {"laser-on-gpio",              GPIOF_IN},
   [PIN_LASER_PGOOD]           = {"laser-pgood-gpio",           GPIOF_IN},
   [PIN_BUTTON_LATCH]          = {"button-latch-gpio",          GPIOF_IN},
-  /* interlock latch reset: driven output, read back; init low matches the
-   * factory. */
-  [PIN_INTERLOCK_LATCH_RESET] = {"interlock-latch-reset-gpio", GPIOF_OUT_INIT_LOW},
+  /* interlock latch reset: driven output, read back. Starts HIGH (latch set,
+   * emission blocked) and is released by cnc_interlock only once a switch
+   * device reports the remote-interlock loop closed. */
+  [PIN_INTERLOCK_LATCH_RESET] = {"interlock-latch-reset-gpio", GPIOF_OUT_INIT_HIGH},
+  /* charge-pump watchdog Q, inverted on the board (0 = one-shot alive). */
+  [PIN_CHARGE_PUMP_ALIVE]     = {"charge-pump-alive-gpio",     GPIOF_IN},
 };
 
 

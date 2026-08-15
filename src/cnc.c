@@ -1171,9 +1171,25 @@ int cnc_get_button_latch(struct cnc *self)
   return gpio_get_value(self->gpios[PIN_BUTTON_LATCH]);
 }
 
+int cnc_get_charge_pump_alive(struct cnc *self)
+{
+  /* The one-shot's Q reaches the SoC through an inverter: low = alive. */
+  return !gpio_get_value(self->gpios[PIN_CHARGE_PUMP_ALIVE]);
+}
+
 int cnc_get_interlock_latch_reset(struct cnc *self)
 {
   return gpio_get_value(self->gpios[PIN_INTERLOCK_LATCH_RESET]);
+}
+
+
+/* Drive callback for the interlock-latch policy (cnc_interlock.c). Runs
+ * from the input event path with interrupts disabled, so this must stay a
+ * plain non-sleeping GPIO write. */
+static void cnc_interlock_drive(struct cnc_interlock *il, int level)
+{
+  struct cnc *self = container_of(il, struct cnc, interlock);
+  gpio_set_value(self->gpios[PIN_INTERLOCK_LATCH_RESET], level);
 }
 
 int cnc_get_laser_on_sampled(struct cnc *self)
@@ -1190,6 +1206,7 @@ int cnc_get_laser_pgood_sampled(struct cnc *self)
  * Raw snapshot of the safety-chain GPIOs as a bitmask:
  *   bit 0: LASER_ON   bit 1: LASER_ENABLE   bit 2: BUTTON_LATCH
  *   bit 3: LASER_LATCH   bit 4: INTERLOCK_LATCH_RESET
+ *   bit 5: CHARGE_PUMP_ALIVE (raw pin: 0 = alive)
  */
 int cnc_get_interlock_circuit(struct cnc *self)
 {
@@ -1199,6 +1216,7 @@ int cnc_get_interlock_circuit(struct cnc *self)
   if (gpio_get_value(self->gpios[PIN_BUTTON_LATCH]))          { v |= 4; }
   if (gpio_get_value(self->gpios[PIN_LASER_LATCH_RESET]))     { v |= 8; }
   if (gpio_get_value(self->gpios[PIN_INTERLOCK_LATCH_RESET])) { v |= 16; }
+  if (gpio_get_value(self->gpios[PIN_CHARGE_PUMP_ALIVE]))     { v |= 32; }
   return v;
 }
 
@@ -1722,6 +1740,15 @@ int cnc_probe(struct platform_device *pdev)
     goto failed_create_link;
   }
 
+  /* Interlock-latch drive: blocked from here (the pin also powers up high)
+   * until the gpio-keys switch device attaches and reports the loop closed. */
+  cnc_interlock_init(&self->interlock, cnc_interlock_drive);
+  ret = cnc_interlock_register(&self->interlock, "glowforge-interlock");
+  if (ret) {
+    dev_err(&pdev->dev, "failed to register the interlock input handler: %d", ret);
+    goto failed_interlock_register;
+  }
+
   /* Create /dev/glowforge LAST: the device becomes visible to userspace
    * only once everything behind it (regulator, IRQs, sysfs) is up, so
    * the unwind can never deregister a device someone already opened. */
@@ -1753,6 +1780,8 @@ int cnc_probe(struct platform_device *pdev)
   return 0;
 
 failed_pulsedev_register:
+  cnc_interlock_unregister(&self->interlock);
+failed_interlock_register:
   sysfs_remove_link(glowforge_kobj, CNC_GROUP_NAME);
 failed_create_link:
   {
@@ -1801,6 +1830,8 @@ void cnc_remove(struct platform_device *pdev)
    * device's; removing it from the wrong kobject left a stale link that
    * made every rebind fail with -EEXIST. */
   misc_deregister(&self->pulsedev);
+  /* Detaching from the switch device leaves INTERLOCK_LATCH_RESET high. */
+  cnc_interlock_unregister(&self->interlock);
   sysfs_remove_link(glowforge_kobj, CNC_GROUP_NAME);
   sysfs_remove_group(&pdev->dev.kobj, &cnc_attr_group);
   /* NULL first: the fault tasklet can call cnc_notify_state_changed

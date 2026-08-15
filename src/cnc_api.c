@@ -407,6 +407,7 @@ DEFINE_RO_GETTER_ATTR(ATTR_LASER_PGOOD_SAMPLED, cnc_get_laser_pgood_sampled);
 DEFINE_RO_GETTER_ATTR(ATTR_INTERLOCK_CIRCUIT, cnc_get_interlock_circuit);
 DEFINE_RO_GETTER_ATTR(ATTR_INTERLOCK_LATCH_RESET, cnc_get_interlock_latch_reset);
 DEFINE_RO_GETTER_ATTR(ATTR_BUTTON_LATCH, cnc_get_button_latch);
+DEFINE_RO_GETTER_ATTR(ATTR_CHARGE_PUMP_ALIVE, cnc_get_charge_pump_alive);
 
 static struct attribute *cnc_attrs[] = {
   DEV_ATTR_PTR(ATTR_STATE),
@@ -440,6 +441,7 @@ static struct attribute *cnc_attrs[] = {
   DEV_ATTR_PTR(ATTR_INTERLOCK_CIRCUIT),
   DEV_ATTR_PTR(ATTR_INTERLOCK_LATCH_RESET),
   DEV_ATTR_PTR(ATTR_BUTTON_LATCH),
+  DEV_ATTR_PTR(ATTR_CHARGE_PUMP_ALIVE),
   NULL
 };
 

@@ -32,6 +32,7 @@ aborted cut are wanted, and a pump stop/start cycle can airlock the loop.
 ```pre
 /sys/glowforge/cnc       <- Motion control, machine state
     |---button_latch:        (RO) Button-latch line state
+    |---charge_pump_alive:   (RO) Charge-pump watchdog state
     |---disable:             (WO) Stop all motion and turn off stepper motors and laser
     |---enable:              (WO) Power on steppers and make ready for run
     |---faults:              (RO) Status of stepper axis faults
@@ -141,7 +142,11 @@ aborted cut are wanted, and a pump stop/start cycle can airlock the loop.
 #### /sys/glowforge/cnc
 ##### button_latch
 Read, ASCII, 0-1  
-Raw state of the button-latch line.  
+State of the safety chain's button latch: 1 = set (emission blocked until the operator presses the button with the lid closed and `laser_latch` unlocked), 0 = cleared (armed).  
+
+##### charge_pump_alive
+Read, ASCII, 0-1  
+Logical state of the charge-pump watchdog: 1 = the retriggerable one-shot fed by the driver's charge-pump pulses is still within its period (the HV_ENABLE path is alive), 0 = it has timed out. The line is active low on the board; this attribute reports the logical state. Monitoring only.  
 
 ##### disable
 Write, ASCII, 1  
@@ -174,14 +179,14 @@ Sets which stepper driver faults to ignore.
 Bits: 0: X Axis, 1: Y1 Axis, 2: Y2 Axis  
 
 ##### interlock_circuit
-Read, ASCII, 0-31  
+Read, ASCII, 0-63  
 Raw snapshot of the laser-safety-chain GPIOs as a bitmask. Monitoring only; enforcement is in the hardware AND-gate.  
-Bits: 0: LASER_ON, 1: LASER_ENABLE, 2: BUTTON_LATCH, 3: LASER_LATCH, 4: INTERLOCK_LATCH_RESET  
+Bits: 0: LASER_ON, 1: LASER_ENABLE, 2: BUTTON_LATCH, 3: LASER_LATCH, 4: INTERLOCK_LATCH_RESET, 5: CHARGE_PUMP_ALIVE (raw pin, 0 = alive)  
 Bits 1, 3 and 4 are driven outputs: mainline gpio-mxc reads output lines back from the data register, so those bits report the value the SoC last drove, not a sense of the pad. Bit 3 is therefore the authoritative view of what the driver commanded the latch to do (`laser_latch` is write-only) and not evidence that the latch hardware responded — the physical proof is `laser_on`/`laser_on_sampled`, which read the gated output of the safety AND-gate.  
 
 ##### interlock_latch_reset
 Read, ASCII, 0-1  
-State of the interlock latch-reset line (a driven output, initialized low; read back from the data register, i.e. the value last driven).  
+State of the interlock latch-reset line, the SoC's SET input to the safety chain's interlock latch (read back from the data register, i.e. the value last driven). The driver owns this line: it is 1 (latch set, LASER_ON blocked in hardware) whenever the remote-interlock loop reads open, and also from probe until a switch device reporting the loop has attached - an unobservable loop is treated as open. It is 0 only while an attached switch device reports the loop closed. The loop state comes from the gpio-keys switch device (EV_SW code 5, `interlock`, active = open) through an in-kernel input handler, so no userspace round trip is involved and the GPIO stays owned by gpio-keys. Because the interlock latch is set-dominant, it stays set until this line is released *and* the loop is closed; the latch's own state is the `interlock_latch` switch (EV_SW code 6).  
 
 ##### laser_enable
 Read, ASCII, 0-1  
@@ -630,4 +635,4 @@ Both values are internally truncated to multiples of MSECS_PER_UPDATE.
 #### /sys/class/leds/camera_mux_oe
 This controls the output on the camera multiplexer.  The ```brightness``` value should be set to 255.  Setting a value of 0 will shut the output off.  There is no reason to ever shut the output off.  
 
-The interlock latch-reset line is exposed by the cnc driver as the read-only ```interlock_latch_reset``` attribute.
+The interlock latch-reset line is owned by the cnc driver (see ```interlock_latch_reset```); it follows the remote-interlock switch and is not writable from userspace.

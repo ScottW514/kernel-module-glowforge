@@ -7,6 +7,15 @@ on:
   workflow_dispatch:
 
 jobs:
+  # Host-side tests for the kernel-independent units (tests/). These need
+  # only the host compiler and the Linux UAPI headers.
+  host-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and run
+        run: make -C tests check
+
   # Cross-compile the module against the same kernel the image ships:
   # linux-fslc 6.12 with the Glowforge BSP overlay (EPIT/SDMA API
   # patches + config fragment) from meta-openglow, mirroring the

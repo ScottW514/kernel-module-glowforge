@@ -25,6 +25,7 @@
 #define KERNEL_SRC_CNC_PRIVATE_H_
 
 #include "cnc.h"
+#include "cnc_interlock.h"
 #include "cnc_pins.h"
 #include "uapi/glowforge.h"
 
@@ -220,6 +221,7 @@ int cnc_get_laser_enable(struct cnc *self);
 int cnc_get_laser_on(struct cnc *self);
 int cnc_get_laser_pgood(struct cnc *self);
 int cnc_get_button_latch(struct cnc *self);
+int cnc_get_charge_pump_alive(struct cnc *self);
 int cnc_get_interlock_latch_reset(struct cnc *self);
 int cnc_get_laser_on_sampled(struct cnc *self);
 int cnc_get_laser_pgood_sampled(struct cnc *self);
@@ -465,6 +467,8 @@ struct cnc {
   struct hrtimer charge_pump_timer;
   /** Free-running timer that samples the LASER_ON / LASER_PGOOD inputs. */
   struct hrtimer laser_sample_timer;
+  /** Drives INTERLOCK_LATCH_RESET from the remote-interlock switch state. */
+  struct cnc_interlock interlock;
   /** Working low-sample counts for the in-progress sampling window. */
   u32 laser_on_low_count;
   u32 laser_pgood_low_count;
