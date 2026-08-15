@@ -124,7 +124,7 @@ static void test_unrelated_events_ignored(void)
   cnc_interlock_attach(&il, false);
   CHECK(drive_level == 0);
   cnc_interlock_event(&il, EV_SW, 3, 1);            /* doors */
-  cnc_interlock_event(&il, EV_SW, 4, 0);            /* estop sense */
+  cnc_interlock_event(&il, EV_SW, 4, 0);            /* hv_enable readback */
   cnc_interlock_event(&il, EV_SW, 6, 1);            /* interlock_latch readback */
   cnc_interlock_event(&il, EV_KEY, CNC_INTERLOCK_SW_CODE, 1);
   cnc_interlock_event(&il, EV_SYN, 0, 0);
