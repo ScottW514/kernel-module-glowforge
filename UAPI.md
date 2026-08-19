@@ -452,8 +452,8 @@ Read, ASCII, 0-1023
 Thermal Electric Cooler temperature.  
 Formula for conversion to temperature is yet to be determined (it does
 **not** use the coolant beta conversion - only the two water sensors do).
-Observed reading 1023 (rail) on at least one unit, i.e. likely
-unpopulated or an open sensor on some machines.
+Pro machines only: on a Basic or Plus there is no TEC and no sensor, and
+the reading sits at the 1023 rail.
 
 ##### water_temp_1
 Read, ASCII, 0-1023  
@@ -475,17 +475,9 @@ R     = Rd / (F / raw - 1)          # Rd = 10000
 degC  = beta / ln(R / Rinf) - 273.15 # beta = 3380, T0 = 298.15 K (25 C)
 ```
 
-Higher raw = colder (NTC). Recovered from the v2.6.0 firmware binary
-(forward function at 0x65110, inverse at 0x64ee8, parameter block in
-`.data` at VMA 0x11e120). **Proof:** running the firmware's inverse on
-the cloud's coolant setpoints reproduces a machine's `WT*` settings
-exactly - `CMet`/`CMut` 18134 mDeg &rarr; raw 754 = `WTub`, `CMdt` 18364
-mDeg &rarr; raw 751 = `WTvb`. That also identifies the `WT[u|v][a|b]`
-cloud settings as **precomputed per-sensor raw-ADC thresholds** for the
-two ~18 C coolant setpoints (the firmware compares raw readings directly
-against them at runtime instead of calling `log()` per sample);
-`WTaf`/`WTbf` are per-sensor float coefficients (both -2.0 as shipped,
-apparently the uncalibrated default - their exact use is not traced).
+Higher raw = colder (NTC), so a rising reading means a falling
+temperature. The constants are the factory's own, not a curve fit, which
+is why they are exact.
 
 Reference points: raw 640 &rarr; 27.0 C, 680 &rarr; 23.9 C, 740 &rarr;
 19.2 C; inversely 31.04 C &rarr; raw 591, 50.01 C &rarr; raw 391.
@@ -509,7 +501,9 @@ Exhaust fan PWM period. 0: Off, 65535: Full speed
 ##### heater_pwm
 Read/Write, ASCII, 0-65535  
 Water heater PWM period. 0: Off, 65535: Full power  
-This heats the water between the water temp sensors to allow for flow detection.  
+The heater sits in the coolant loop between the two water temperature
+sensors, so heat it puts in shows up as a difference between them. What
+to make of that is up to you.  
 
 ##### intake_pwm
 Read/Write, ASCII, 0-65535  
@@ -534,6 +528,8 @@ Best guess RPM formula: ```((1/(period/1000000000))*60)/2```
 ##### tec_on
 Read/Write, ASCII, 0-1  
 Turns on/off the thermal electric cooler. 0: off, 1: on  
+Pro machines only. Basic and Plus have no TEC fitted, and writing here
+does nothing on those.  
 
 ##### water_pump_on
 Read/Write, ASCII, 0-1  
