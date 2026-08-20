@@ -23,6 +23,7 @@
 #include <linux/log2.h>
 #include <linux/moduleparam.h>
 
+#include "cnc_backtrack.h"
 #include "cnc_private.h"
 #include "sdma_macros.h"
 
@@ -46,7 +47,10 @@ MODULE_PARM_DESC(ring_mb, "pulse ring size in MiB (power of two, must fit "
 /**
  * Enforce a minimum gap between head and tail.
  * This allows a small amount of data to be retained after it has been
- * processed.
+ * processed: the writer stops this far short of overwriting the play head's
+ * history, so a pause always has at least this many bytes to back into,
+ * whether the job was preloaded or is being fed live (cnc_backtrack.h).
+ * 32 KiB is 3.2 seconds of history at the 10 kHz print tick.
  */
 #define CNC_BUFFER_GAP_SIZE (32 * SZ_1K)
 
@@ -197,7 +201,6 @@ int cnc_buffer_clear(struct cnc *self, unsigned int flags)
     cleared_context.scratch4 = self->pulsebuf_fifo.kfifo.out;
     cleared_context.scratch5 = self->pulsebuf_fifo.kfifo.in;
     self->pulsebuf_total_bytes = 0;
-    self->pulsebuf_streamed = false;  /* fresh ring: backtrack legal again */
   }
 
   /* convert register numbers (i.e. word offsets) to byte offsets */
@@ -228,19 +231,37 @@ size_t cnc_buffer_get_free_space(struct cnc *self)
   return (avail > CNC_BUFFER_GAP_SIZE) ? avail-CNC_BUFFER_GAP_SIZE : 0;
 }
 
+/* may sleep */
 uint32_t cnc_buffer_max_backtrack_length(struct cnc *self)
 {
-  /* Only the already-played bytes still physically in the ring are
-   * backtrackable: ring size minus the unplayed span [out, in), less the
-   * retained gap - and never more than was ever enqueued. (Bounding by
-   * total_bytes alone assumed the preload model, where total_bytes fits
-   * the ring; a streamed ring holds garbage beyond this bound.) */
-  uint32_t unplayed = self->pulsebuf_fifo.kfifo.in - self->pulsebuf_fifo.kfifo.out;
-  uint32_t intact = kfifo_size(&self->pulsebuf_fifo) - unplayed;
-  uint32_t total = self->pulsebuf_total_bytes > 0xFFFFFFFFULL
-                 ? 0xFFFFFFFFu : (uint32_t)self->pulsebuf_total_bytes;
-  intact = (intact > CNC_BUFFER_GAP_SIZE) ? intact - CNC_BUFFER_GAP_SIZE : 0;
-  return min(total, intact);
+  /* Bytes that are played, genuine and still resident, less the tail the
+   * controlled deceleration plays out past the waypoint. The gap the writer
+   * leaves puts a floor under this, so a live feed keeps a pause's worth of
+   * history without the feeder having to arrange one (cnc_backtrack.h). */
+  uint32_t unplayed;
+  /* A failed head fetch must not answer from a stale play position: report
+   * no history, which refuses the backward run. */
+  if (cnc_buffer_sync_head(self)) {
+    return 0;
+  }
+  unplayed = self->pulsebuf_fifo.kfifo.in - self->pulsebuf_fifo.kfifo.out;
+  return cnc_backtrack_max_steps(kfifo_size(&self->pulsebuf_fifo), unplayed,
+                                 self->pulsebuf_total_bytes,
+                                 cnc_backtrack_decel_steps(
+                                   cnc_get_step_frequency(self),
+                                   cnc_get_ramp_rate_hz_per_s(self)));
+}
+
+
+uint32_t cnc_buffer_backtrack_dead_stop(struct cnc *self)
+{
+  /* Where a backward run must come to a dead stop: the oldest byte behind
+   * the write index that is still genuine job data. Under the preload model
+   * that is the first byte of the job; once the ring has wrapped under a
+   * live feed it is one ring back, and anything older is overwritten. */
+  return self->pulsebuf_fifo.kfifo.in
+       - cnc_backtrack_span(kfifo_size(&self->pulsebuf_fifo),
+                            self->pulsebuf_total_bytes);
 }
 
 uint32_t cnc_buffer_fifo_bitmask(struct cnc *self)

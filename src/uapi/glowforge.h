@@ -75,6 +75,7 @@
 #define ATTR_MOTOR_LOCK           motor_lock
 #define ATTR_POSITION             position
 #define ATTR_FREE                 free
+#define ATTR_MAX_BACKTRACK        max_backtrack
 #define ATTR_STREAMING            streaming
 #define ATTR_UNDERRUNS            underruns
 #define ATTR_SDMA_CONTEXT         sdma_context

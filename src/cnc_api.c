@@ -237,6 +237,22 @@ static ssize_t free_show(struct device *dev, struct device_attribute *attr, char
 }
 
 
+/* How far back a pause may walk the program, in steps: what the ring still
+ * holds of what it has already played, less the deceleration tail. A caller
+ * sizes both its backtrack and its laser-on lead from this, so a pause early
+ * in a job (or on a ring that has just been refilled) shortens the retrace
+ * instead of failing it. Each read performs SDMA channel-0 transactions. */
+static ssize_t max_backtrack_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+  struct cnc *self = dev_get_drvdata(dev);
+  uint32_t steps;
+  mutex_lock(&self->pulsebuf_lock);
+  steps = cnc_buffer_max_backtrack_length(self);
+  mutex_unlock(&self->pulsebuf_lock);
+  return scnprintf(buf, PAGE_SIZE, "%u\n", steps);
+}
+
+
 static ssize_t sdma_context_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
   struct cnc *self = dev_get_drvdata(dev);
@@ -265,11 +281,6 @@ static ssize_t streaming_store(struct device *dev, struct device_attribute *attr
   if (ch != '0' && ch != '1') { return -EINVAL; }
   spin_lock_bh(&self->status_lock);
   self->status.streaming = (ch == '1');
-  if (ch == '1') {
-    /* A live-streamed ring holds stale bytes beyond the retained gap;
-     * backtracking stays refused until the next data clear. */
-    self->pulsebuf_streamed = true;
-  }
   spin_unlock_bh(&self->status_lock);
   return count;
 }
@@ -389,6 +400,7 @@ DEFINE_DEVICE_ATTR(ATTR_STEP_FREQ, S_IRUSR|S_IWUSR, step_freq_show, step_freq_st
 DEFINE_DEVICE_ATTR(ATTR_RAMP_RATE, S_IRUSR|S_IWUSR, ramp_rate_show, ramp_rate_store);
 DEFINE_DEVICE_ATTR(ATTR_POSITION, S_IRUSR, position_show, NULL);
 DEFINE_DEVICE_ATTR(ATTR_FREE, S_IRUSR, free_show, NULL);
+DEFINE_DEVICE_ATTR(ATTR_MAX_BACKTRACK, S_IRUSR, max_backtrack_show, NULL);
 DEFINE_DEVICE_ATTR(ATTR_SDMA_CONTEXT, S_IRUSR, sdma_context_show, NULL);
 DEFINE_DEVICE_ATTR(ATTR_MOTOR_LOCK, S_IRUSR|S_IWUSR, motor_lock_show, motor_lock_store);
 DEFINE_DEVICE_ATTR(ATTR_STREAMING, S_IRUSR|S_IWUSR, streaming_show, streaming_store);
@@ -424,6 +436,7 @@ static struct attribute *cnc_attrs[] = {
   DEV_ATTR_PTR(ATTR_LASER_LATCH),
   DEV_ATTR_PTR(ATTR_POSITION),
   DEV_ATTR_PTR(ATTR_FREE),
+  DEV_ATTR_PTR(ATTR_MAX_BACKTRACK),
   DEV_ATTR_PTR(ATTR_STREAMING),
   DEV_ATTR_PTR(ATTR_UNDERRUNS),
   DEV_ATTR_PTR(ATTR_SDMA_CONTEXT),

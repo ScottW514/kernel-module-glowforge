@@ -329,9 +329,18 @@ uint32_t cnc_buffer_total_bytes(struct cnc *self);
 
 /**
  * Returns the maximum number of valid, contiguous data bytes that can be
- * backtracked over.
+ * backtracked over: played, genuine and still resident, less the tail the
+ * controlled deceleration plays out (cnc_backtrack.h). Fetches the play
+ * position first, so it may sleep; call it under pulsebuf_lock, where a
+ * writer cannot shrink the answer between the check and the run.
  */
 uint32_t cnc_buffer_max_backtrack_length(struct cnc *self);
+
+/**
+ * Returns the buffer index a backward run must dead-stop at: the oldest byte
+ * behind the write index that is still genuine job data.
+ */
+uint32_t cnc_buffer_backtrack_dead_stop(struct cnc *self);
 
 /**
  * Clears the given pulse data buffer attributes.
@@ -393,10 +402,6 @@ struct cnc {
   /** Total bytes of pulse data enqueued since last clear. 64-bit: a live
    *  streaming feeder outgrows 4 GiB within a long soak. */
   uint64_t pulsebuf_total_bytes;
-  /** True once the ring has been live-streamed since the last data clear:
-   *  stale bytes beyond the retained gap are then garbage, so backtracking
-   *  is refused until a clear. */
-  bool pulsebuf_streamed;
   /** Serializes the ring mutators (user writes, clears, and the run-start
    *  scratch-register publish): one-open exclusivity does not bound the
    *  number of WRITERS when the brokered fd is inherited. Same-task

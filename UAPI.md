@@ -47,6 +47,7 @@ aborted cut are wanted, and a pump stop/start cycle can airlock the loop.
     |---laser_on_sampled:    (RO) LASER_ON low-sample count (last ~1s)
     |---laser_pgood:         (RO) Laser power-good state
     |---laser_pgood_sampled: (RO) LASER_PGOOD low-sample count (last ~1s)
+    |---max_backtrack:       (RO) Longest backward run the ring can still play, in steps
     |---motor_lock:          (RW) Disable step output per motor
     |---position:            (RO) Current axis positions and loaded program size/progress
     |---ramp_rate:           (RW) Accel/decel rate in Hz/s
@@ -212,6 +213,11 @@ Logical state of the laser power-good line (active low; 1 = power good).
 Read, ASCII, 0-255  
 Number of samples in the last ~1 second window (255 samples) in which the LASER_PGOOD line read low. Updated once per window.  
 
+##### max_backtrack
+Read, ASCII, steps  
+The longest backward run (see ```resume```) the ring can still play: bytes it has already played, that belong to this program, that have not yet been overwritten, less the steps the controlled deceleration plays out past the waypoint. A pause reads this and sizes both its backtrack and the laser-on lead of the resume that follows from it, so a pause early in a program (or on a ring a live feed has just refilled) shortens the retrace instead of failing it.  
+The floor is the retained gap: a writer must leave 32 KiB of ring unwritten behind the play head, so 32 KiB of history - 3.2 s at the 10 kHz print tick - survives any fill, live-fed or preloaded. Each read performs SDMA channel-0 transactions.
+
 ##### motor_lock
 Read/Write, ASCII, 0-15  
 Sets axis lock. If the axis bit is set, that axis will not move when running a program.  
@@ -239,7 +245,7 @@ Cannot be changed while a program is running (returns -EBUSY).
 
 ##### resume
 Write, ASCII, -268435455 - 268435455  
-Negative values: Laser disabled. Accelerate backwards, run number of specified steps, then decelerate and stop. Refused (EPERM) if the ring has been live-streamed since the last data clear — backtracking is a preload-model operation, and a streamed ring holds stale bytes beyond the retained gap.  
+Negative values: Laser disabled. Accelerate backwards, run number of specified steps, then decelerate and stop. Refused (EPERM) if the request is longer than ```max_backtrack```: the run is never quietly shortened, because a caller sizes the laser-on lead of its resume to the distance it asked for, and a silent shortfall would put the beam back on ahead of the pause point. A live feed is backtrackable on the same terms as a preloaded program: what bounds the walk is the ring's retained history, not how the ring was filled.  
 Positive values: Accelerate forward, run number of requested steps, reenable laser, and continue program normally.  
 Zero: Accelerate forward, continue program without reenabling laser.  
 The step count is a 28-bit waypoint counter; magnitudes at or above 2^28 are rejected with EINVAL rather than silently truncated.
@@ -608,6 +614,14 @@ with 0.2 ms worst write latency and zero underruns.
 
 **Do not write while running backward** (backtrack): the write path would
 clobber the backtrack dead-stop; such writes are rejected with -EBUSY.
+
+**Pausing a live feed.** The 32 KiB the writer keeps clear is retained
+history, so a live-fed program can back up and resume exactly like a
+preloaded one. Read ```max_backtrack``` for the distance available, ask for
+no more than that (a longer request is refused, not shortened), and lead the
+laser back on over the ground the backward run retraced. Topping the ring up
+between the read and the ```resume``` write can shorten the answer, so treat
+an -EPERM there as "read it again or hold where you are", not as a fault.
 
 **Recommended feeder shape.** Hold the fd open + flock'd for the whole job
 (deadman armed); prefill one queue depth; ```run```; top up on a 10-20 ms

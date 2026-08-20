@@ -639,23 +639,23 @@ static int cnc_run_with_options(struct cnc *self, struct cnc_run_options opts)
       return ret;
     }
 
-    /* The backtrack clamp, the scratch-register snapshot, and the state
+    /* The backtrack check, the scratch-register snapshot, and the state
      * commit below must be consistent against a concurrent writer or
      * clear on the shared (inheritable) fd. */
     mutex_lock(&self->pulsebuf_lock);
 
-    /* If backtracking, clamp num_steps to ensure we stop before hitting the */
-    /* end of valid contiguous data */
+    /* A backward run may only walk over data that is played, genuine and
+     * still resident. Refuse a longer request rather than quietly running
+     * a shorter one: the caller sizes its laser-on lead to the distance it
+     * asked for, so a silent shortfall puts the beam back on ahead of the
+     * pause point and leaves an unburned length in the cut. */
     if (opts.backward) {
-      num_steps = min(num_steps, cnc_buffer_max_backtrack_length(self));
-      if (num_steps == 0) {
-        /* Shouldn't happen; if cnc_buffer_max_backtrack_length() is 0 then */
-        /* the cnc_buffer_is_empty() call would have returned true. num_steps */
-        /* is also checked against 0 in cnc_backtrack(). Still, another check */
-        /* doesn't hurt. (num_steps cannot be 0 during a backtrack, or else */
-        /* we'll never get an interrupt to start deceleration.) */
+      uint32_t max_steps = cnc_buffer_max_backtrack_length(self);
+      if (num_steps > max_steps) {
+        dev_err(self->dev, "backtrack of %u steps refused; %u retained",
+                num_steps, max_steps);
         mutex_unlock(&self->pulsebuf_lock);
-        return -ENODATA;
+        return -EPERM;
       }
     }
 
@@ -664,15 +664,14 @@ static int cnc_run_with_options(struct cnc *self, struct cnc_run_options opts)
     /* go past the oldest data byte. Wraparound in subtraction is OK. */
     regs[0] /* scratch5 */ =
      (!opts.backward) ? self->pulsebuf_fifo.kfifo.in
-                      : self->pulsebuf_fifo.kfifo.in
-                        - (uint32_t)self->pulsebuf_total_bytes;
+                      : cnc_buffer_backtrack_dead_stop(self);
       /* Note when running backward: it would be incorrect to set scratch5 */
       /* to (self->pulsebuf_fifo.kfifo.in-num_steps). When head == tail, */
       /* the DMA engine will come to a dead stop. But when backtracking we */
       /* want to *decelerate* after num_steps, and only come to a dead stop */
-      /* if we run out of room to backtrack. (Backward runs only happen in */
-      /* the preload model - cnc_backtrack refuses a streamed ring - so */
-      /* total_bytes fits 32 bits here.) */
+      /* if we run out of room to backtrack. The dead stop is the oldest */
+      /* byte that is still genuine job data: the start of the job while it */
+      /* fits the ring, one ring back once a live feed has wrapped it. */
     regs[1] /* scratch6 */ = (!opts.backward) ? 0x00000001 : 0xFFFFFFFF;
     regs[2] /* scratch7 */ = num_steps;
 
@@ -779,22 +778,14 @@ int cnc_run(struct cnc *self)
 
 int cnc_backtrack(struct cnc *self, uint32_t num_steps)
 {
-  bool streamed;
   if (num_steps == 0) {
     return -EINVAL;
   }
-  /* A live-streamed ring holds stale bytes beyond the retained gap:
-   * walking backward over them replays garbage steps (the script forces
-   * the laser off backward, but X/Y/Z from garbage is a gantry crash).
-   * Backtracking is a preload-model operation; refuse it until the next
-   * data clear. */
-  spin_lock_bh(&self->status_lock);
-  streamed = self->status.streaming || self->pulsebuf_streamed;
-  spin_unlock_bh(&self->status_lock);
-  if (streamed) {
-    dev_err(self->dev, "backtrack refused: ring was live-streamed");
-    return -EPERM;
-  }
+  /* How far back the ring can be walked is a property of the ring, not of
+   * how it was filled: cnc_run_with_options() refuses a request longer than
+   * the retained history, and the engine's dead stop bounds the run at the
+   * oldest genuine byte either way. A live feed keeps at least the writer's
+   * gap of history, so a streamed job pauses like a preloaded one. */
   /* Run backward, with acceleration, deceleration, and waypoint interrupt. */
   /* (Waypoint interrupt starts deceleration after num_steps.) */
   return cnc_run_with_options(self, (struct cnc_run_options){
