@@ -32,15 +32,16 @@
  * (cnc-pulsebuf in the device tree). Sizing: the grblHAL live feed keeps
  * only ~200 ms (a few KB) in flight, while legacy cloud mode preloads a
  * job's ENTIRE pulse file into the ring before playback - the ring is the
- * cloud-mode job-length cap at ~1 MiB per 100 s of 10 kHz stream (16 MiB
- * = ~28 min). Raise ring_mb (and the DT pool) for longer cloud jobs.
+ * cloud-mode job-length cap at ~1 MiB per 100 s of 10 kHz stream (32 MiB
+ * = ~56 min, the same ring the factory firmware runs). Raise ring_mb (and
+ * the DT pool) for longer cloud jobs.
  */
-#define CNC_BUFFER_DEFAULT_MB 16
+#define CNC_BUFFER_DEFAULT_MB 32
 
 static unsigned int ring_mb = CNC_BUFFER_DEFAULT_MB;
 module_param(ring_mb, uint, 0444);
 MODULE_PARM_DESC(ring_mb, "pulse ring size in MiB (power of two, must fit "
-                          "the cnc reserved pool; default 16)");
+                          "the cnc reserved pool; default 32)");
 
 /**
  * Enforce a minimum gap between head and tail.

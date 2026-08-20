@@ -1590,8 +1590,8 @@ int cnc_probe(struct platform_device *pdev)
 
   /*
    * Attach a dedicated coherent DMA pool if the DT provides one (a
-   * memory-region -> non-reusable shared-dma-pool). The 128 MiB pulse buffer
-   * is too large and alignment-sensitive to pull reliably from the shared CMA
+   * memory-region -> non-reusable shared-dma-pool). The pulse ring is too
+   * large and alignment-sensitive to pull reliably from the shared CMA
    * once boot has fragmented it (cma_alloc -EBUSY). The generic device core
    * only auto-attaches "restricted-dma-pool" nodes, so we must do it here.
    * -ENODEV just means no memory-region: fall back to the default allocator.

@@ -537,7 +537,7 @@ Turns on/off the water pump. 0: off, 1: on
 
 ---
 #### /dev/glowforge
-Write/Seek/Lock, Binary, ring (size = the ```ring_mb``` module parameter, default 16 MiB; power of two, must fit the cnc reserved-memory pool)  
+Write/Seek/Lock, Binary, ring (size = the ```ring_mb``` module parameter, default 32 MiB; power of two, must fit the cnc reserved-memory pool)  
 Interface to the pulse-stream ring buffer. Exclusive-open: a second open fails with EBUSY, so one process holds one fd and routes every write and seek through it.  
 Seeking to 0 will clear program data, byte counters, and position counters.  
 Seeking to 1 will clear program data and byte counters.  
@@ -598,11 +598,11 @@ final bytes of a job so its terminal end-of-data counts as completion.
 ```free``` for pacing - every read costs two channel-0 SDMA transactions;
 pace by wall clock (enqueued_target = elapsed * step_freq + queue_depth) and
 treat -ENOMEM as "back off". Keep the queue depth BOUNDED (50-200 ms) so
-feed/power overrides take effect promptly; the ring (default 16 MiB, the
+feed/power overrides take effect promptly; the ring (default 32 MiB, the
 ```ring_mb``` module parameter) holds many minutes of stream, so depth is a
 latency choice, not a capacity one. NOTE: a whole-file preloader (legacy
-cloud mode) is capped by the ring size - ~1 MiB per 100 s of 10 kHz
-stream. Measured reference (i.MX6 Solo, PREEMPT,
+cloud mode) is capped by the ring size - ~1 MiB per 100 s of 10 kHz stream,
+so ~56 min at the 32 MiB default. Measured reference (i.MX6 Solo, PREEMPT,
 SCHED_FIFO feeder, full CPU+IO load): 150 ms depth at 100 kHz ran 2 minutes
 with 0.2 ms worst write latency and zero underruns.
 
